@@ -14,7 +14,7 @@ import (
 
 	"github.com/moooofly/dms-elector/util"
 
-	pb "github.com/moooofly/dms-elector/protobuf"
+	pb "github.com/moooofly/dms-elector/proto"
 
 	"github.com/samuel/go-zookeeper/zk"
 	"github.com/sirupsen/logrus"
@@ -1328,13 +1328,13 @@ func (e *ClusterElector) Start() error {
 		}
 	}
 
-	logrus.Infof("[%s] stopped", e.id)
+	logrus.Infof("[%d] stopped", e.id)
 	return nil
 }
 
 // Stop the elector
 func (e *ClusterElector) Stop() {
-	logrus.Infof("[%s] stopping", e.id)
+	logrus.Infof("[%d] stopping", e.id)
 	e.state = stateStopped
 	close(e.stopCh)
 	e.zkConnHandler.close(e)
@@ -1364,12 +1364,12 @@ func (e *ClusterElector) Promote() {
 func (e *ClusterElector) doConnectZkSrv() error {
 	c, _, err := zk.Connect(e.zkHost, 30*time.Second)
 	if err != nil {
-		logrus.Warnf("[%s] cannot connect zookeeper", e.id)
+		logrus.Warnf("[%d] cannot connect zookeeper", e.id)
 		return err
 	}
 	e.zkConn = c
 
-	logrus.Infof("[%s] zk connection assigned", e.id)
+	logrus.Infof("[%d] zk connection assigned", e.id)
 	return nil
 }
 
@@ -1387,14 +1387,14 @@ func (e *ClusterElector) connectZkTillSucceed(start bool) {
 	for e.state&stateRunning != 0 {
 		if start || e.zkConn == nil {
 			if err := e.zkConnHandler.connect(e); err != nil {
-				logrus.Warnf("[%s] connect zk failed: %r", e.Info().String(), err)
+				logrus.Warnf("[%s] connect zk failed: %v", e.Info().String(), err)
 				time.Sleep(time.Second)
 			} else {
-				logrus.Infof("[%s] will try my best to connect zk for the first time", e.id)
+				logrus.Infof("[%d] will try my best to connect zk for the first time", e.id)
 				return
 			}
 		} else {
-			logrus.Infof("[%s] let zk client reconnect automatically", e.id)
+			logrus.Infof("[%d] let zk client reconnect automatically", e.id)
 			return
 		}
 	}
@@ -1430,7 +1430,7 @@ L:
 						goto RECONNECT
 
 					default:
-						logrus.Infof("[%s] zkLegalLeader failed: %r", e.Info().String(), err)
+						logrus.Infof("[%s] zkLegalLeader failed: %v", e.Info().String(), err)
 						time.Sleep(time.Second)
 						goto L
 					}
@@ -1440,13 +1440,13 @@ L:
 					// the ascend has be done and role has been changed
 					// clear the bit
 					e.state &^= stateLeaderBootStrapping
-					logrus.Infof("[%s] stateLeaderBootStrapping bit has been clear cuz role changed", e.id)
+					logrus.Infof("[%d] stateLeaderBootStrapping bit has been clear cuz role changed", e.id)
 					e.changeRole(RoleLeader, RoleFollower)
 					goto L
 				}
 
 			default:
-				logrus.Infof("[%s] ascend failed: %r", e.Info().String(), err)
+				logrus.Infof("[%s] ascend failed: %v", e.Info().String(), err)
 				time.Sleep(time.Second)
 				goto L
 			}
@@ -1455,7 +1455,7 @@ L:
 		// the ascend has been done and we are still the leader
 		// clear the bit
 		e.state &^= stateLeaderBootStrapping
-		logrus.Infof("[%s] stateLeaderBootStrapping bit has been clear cuz ascend succeed", e.id)
+		logrus.Infof("[%d] stateLeaderBootStrapping bit has been clear cuz ascend succeed", e.id)
 
 		// delete abdicate flag if any
 		abdicating, err := e.isAbdicating()
@@ -1499,7 +1499,7 @@ L:
 		case req := <-e.reqCh:
 			// if user want to abdicate
 			if req == reqAbdicate {
-				logrus.Infof("[%s] user abdicating", e.id)
+				logrus.Infof("[%d] user abdicating", e.id)
 
 				// create abdicate flag
 				if err := e.beginAbdicate(); err != nil {
@@ -1539,13 +1539,13 @@ L:
 					}
 				}
 
-				logrus.Infof("[%s] waiting for the followers to promote...", e.id)
+				logrus.Infof("[%d] waiting for the followers to promote...", e.id)
 
 				select {
 				case ev := <-abdicateWatchCh:
 					if ev.Type == zk.EventNodeDeleted {
 						// abdicate finished
-						logrus.Infof("[%s] abdicate finished", e.id)
+						logrus.Infof("[%d] abdicate finished", e.id)
 						e.changeRole(RoleLeader, RoleFollower)
 						goto L
 					} else {
@@ -1567,7 +1567,7 @@ L:
 				goto L
 
 			default:
-				logrus.Warnf("[%s] something unexpected happened to the leader: %r", e.Info().String(), ev)
+				logrus.Warnf("[%s] something unexpected happened to the leader: %v", e.Info().String(), ev)
 				time.Sleep(time.Second)
 				goto L
 			}
@@ -1607,7 +1607,7 @@ L:
 					logrus.Infof("[%s] leader down", e.Info().String())
 					goto TRY
 				default:
-					logrus.Warnf("[%s] something unexpected happened to the leader: %r", e.Info().String(), ev)
+					logrus.Warnf("[%s] something unexpected happened to the leader: %v", e.Info().String(), ev)
 					goto L
 				}
 
@@ -1652,7 +1652,7 @@ L:
 		}
 
 		if abdicating {
-			logrus.Infof("[%s] leader abdicating detected, will promote myself", e.id)
+			logrus.Infof("[%d] leader abdicating detected, will promote myself", e.id)
 			if err := e.ascend(); err != nil {
 				switch err {
 				case zk.ErrNoServer:
@@ -1738,7 +1738,7 @@ L:
 				goto L
 			default:
 				// zk errors, retry as a candidate
-				logrus.Infof("[%s] shit happened when trying ascend: %r", e.Info().String(), err)
+				logrus.Infof("[%s] shit happened when trying ascend: %v", e.Info().String(), err)
 				time.Sleep(time.Second)
 			}
 		}
@@ -2003,7 +2003,7 @@ func (rs *requestServer) start() error {
 
 	for _, l := range rs.lnrs {
 		go func(l net.Listener) {
-			logrus.Infof("[req] request server online! %r", l)
+			logrus.Infof("[req] request server online! %v", l)
 
 			for {
 				select {
