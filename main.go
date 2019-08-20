@@ -10,8 +10,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/moooofly/dms-elector/pkg/util"
 	"github.com/moooofly/dms-elector/server"
-	"github.com/moooofly/dms-elector/util"
 
 	"github.com/sirupsen/logrus"
 )
@@ -48,6 +48,15 @@ var zkLeaderDir string
 var protectionPeriod uint
 
 var version string
+
+func init() {
+	v, err := ioutil.ReadFile(versionFilePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot read version file, will exit: %s\n", err.Error())
+		os.Exit(-1)
+	}
+	version = string(v)
+}
 
 func parseConfigFile(path string) error {
 	content, err := util.ReadFile(path)
@@ -197,15 +206,6 @@ func printBanner() {
 		logrus.Infof("zookeeper-leader-dir: %s", zkLeaderDir)
 		logrus.Infof("protection-period: %d", protectionPeriod)
 	}
-}
-
-func init() {
-	v, err := ioutil.ReadFile(versionFilePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "cannot read version file, will exit: %s", err.Error())
-		os.Exit(-1)
-	}
-	version = string(v)
 }
 
 func main() {

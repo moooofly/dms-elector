@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moooofly/dms-elector/util"
+	"github.com/moooofly/dms-elector/pkg/util"
 
 	pb "github.com/moooofly/dms-elector/proto"
 

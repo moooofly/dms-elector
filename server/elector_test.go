@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	cli "DMS-Elector/client"
+	"github.com/moooofly/dms-elector/client"
 
 	"github.com/samuel/go-zookeeper/zk"
 	"github.com/sirupsen/logrus"
@@ -48,14 +48,14 @@ func TestSinglePointElector_ReqSrv(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	c := cli.NewClient(host, path, 5)
+	c := client.NewClient(host, path, 5)
 	c.Connect()
 	defer c.Close()
 
 	if role, err := c.Role(); err != nil {
 		t.Fatal(err)
 	} else {
-		assert.Equal(t, cli.RoleLeader, role)
+		assert.Equal(t, client.RoleLeader, role)
 		assert.Equal(t, RoleLeader, e.Role())
 	}
 
@@ -65,7 +65,7 @@ func TestSinglePointElector_ReqSrv(t *testing.T) {
 	if role, err := c.Role(); err != nil {
 		t.Fatal(err)
 	} else {
-		assert.Equal(t, cli.RoleFollower, role)
+		assert.Equal(t, client.RoleFollower, role)
 		assert.Equal(t, RoleFollower, e.Role())
 	}
 
@@ -75,7 +75,7 @@ func TestSinglePointElector_ReqSrv(t *testing.T) {
 	if role, err := c.Role(); err != nil {
 		t.Fatal(err)
 	} else {
-		assert.Equal(t, cli.RoleLeader, role)
+		assert.Equal(t, client.RoleLeader, role)
 		assert.Equal(t, RoleLeader, e.Role())
 	}
 }
@@ -91,14 +91,14 @@ func TestSinglePointElector_ReqSrvKickTimeoutConn(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	c := cli.NewClient(host, path, 5)
+	c := client.NewClient(host, path, 5)
 	c.Connect()
 	defer c.Close()
 
 	if role, err := c.Role(); err != nil {
 		t.Fatal(err)
 	} else {
-		assert.Equal(t, cli.RoleLeader, role)
+		assert.Equal(t, client.RoleLeader, role)
 		assert.Equal(t, RoleLeader, e.Role())
 	}
 
@@ -444,8 +444,8 @@ func TestMSElector_MSReqSrv(t *testing.T) {
 
 	time.Sleep(10 * time.Second)
 
-	cli0, cli1 := cli.NewClient("127.0.0.1:8293", "/tmp/elector0.sock", 5),
-		cli.NewClient("127.0.0.1:8294", "/tmp/elector1.sock", 5)
+	cli0, cli1 := client.NewClient("127.0.0.1:8293", "/tmp/elector0.sock", 5),
+		client.NewClient("127.0.0.1:8294", "/tmp/elector1.sock", 5)
 	cli0.Connect()
 	cli1.Connect()
 	defer cli0.Close()
@@ -455,12 +455,12 @@ func TestMSElector_MSReqSrv(t *testing.T) {
 		if r, err := cli0.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleLeader, r)
+			assert.Equal(t, client.RoleLeader, r)
 		}
 		if r, err := cli1.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleFollower, r)
+			assert.Equal(t, client.RoleFollower, r)
 		}
 
 		cli0.Abdicate()
@@ -469,12 +469,12 @@ func TestMSElector_MSReqSrv(t *testing.T) {
 		if r, err := cli0.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleFollower, r)
+			assert.Equal(t, client.RoleFollower, r)
 		}
 		if r, err := cli1.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleLeader, r)
+			assert.Equal(t, client.RoleLeader, r)
 		}
 
 		cli0.Promote()
@@ -482,23 +482,23 @@ func TestMSElector_MSReqSrv(t *testing.T) {
 		if r, err := cli0.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleLeader, r)
+			assert.Equal(t, client.RoleLeader, r)
 		}
 		if r, err := cli1.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleFollower, r)
+			assert.Equal(t, client.RoleFollower, r)
 		}
 	} else if e0.Role() == RoleFollower {
 		if r, err := cli0.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleFollower, r)
+			assert.Equal(t, client.RoleFollower, r)
 		}
 		if r, err := cli1.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleLeader, r)
+			assert.Equal(t, client.RoleLeader, r)
 		}
 
 		cli1.Abdicate()
@@ -507,12 +507,12 @@ func TestMSElector_MSReqSrv(t *testing.T) {
 		if r, err := cli0.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleLeader, r)
+			assert.Equal(t, client.RoleLeader, r)
 		}
 		if r, err := cli1.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleFollower, r)
+			assert.Equal(t, client.RoleFollower, r)
 		}
 
 		cli1.Promote()
@@ -521,12 +521,12 @@ func TestMSElector_MSReqSrv(t *testing.T) {
 		if r, err := cli1.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleLeader, r)
+			assert.Equal(t, client.RoleLeader, r)
 		}
 		if r, err := cli0.Role(); err != nil {
 			t.Fatal(err)
 		} else {
-			assert.Equal(t, cli.RoleFollower, r)
+			assert.Equal(t, client.RoleFollower, r)
 		}
 	} else {
 		t.Fatal("should be a leader or follower")
@@ -931,7 +931,7 @@ func TestClusterElector_ReqServer(t *testing.T) {
 	assert.Equal(t, RoleLeader, e0.Role())
 	assert.Equal(t, RoleFollower, e1.Role())
 
-	cli0, cli1 := cli.NewClient(host0, path0, 5), cli.NewClient(host1, path1, 5)
+	cli0, cli1 := client.NewClient(host0, path0, 5), client.NewClient(host1, path1, 5)
 	cli0.Connect()
 	cli1.Connect()
 	defer cli0.Close()
@@ -946,8 +946,8 @@ func TestClusterElector_ReqServer(t *testing.T) {
 		assert.FailNowf(t, "err: %s", err.Error())
 	}
 
-	assert.Equal(t, cli.RoleLeader, r0)
-	assert.Equal(t, cli.RoleFollower, r1)
+	assert.Equal(t, client.RoleLeader, r0)
+	assert.Equal(t, client.RoleFollower, r1)
 
 	cli0.Abdicate()
 	time.Sleep(time.Second * 3)
@@ -960,8 +960,8 @@ func TestClusterElector_ReqServer(t *testing.T) {
 	if err != nil {
 		assert.FailNowf(t, "err: %s", err.Error())
 	}
-	assert.Equal(t, cli.RoleLeader, r1)
-	assert.Equal(t, cli.RoleFollower, r0)
+	assert.Equal(t, client.RoleLeader, r1)
+	assert.Equal(t, client.RoleFollower, r0)
 
 	cli0.Promote()
 	time.Sleep(time.Second * 3)
@@ -974,8 +974,8 @@ func TestClusterElector_ReqServer(t *testing.T) {
 	if err != nil {
 		assert.FailNowf(t, "err: %s", err.Error())
 	}
-	assert.Equal(t, cli.RoleLeader, r0)
-	assert.Equal(t, cli.RoleFollower, r1)
+	assert.Equal(t, client.RoleLeader, r0)
+	assert.Equal(t, client.RoleFollower, r1)
 }
 
 ////////////////////////////////////////////

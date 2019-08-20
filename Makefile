@@ -64,9 +64,9 @@ build_darwin:
 
 pack: build_linux build_darwin
 	@echo "==> Packing ..."
-	@tar czvf $(BINARY)-$(shell cat VERSION).linux-amd64.tar.gz $(BINARY)_linux_amd64 conf/*.yaml
+	@tar czvf $(BINARY)-$(shell cat VERSION).linux-amd64.tar.gz $(BINARY)_linux_amd64 conf/*.conf
 	@echo ""
-	@tar czvf $(BINARY)-$(shell cat VERSION).darwin-amd64.tar.gz $(BINARY)_darwin_amd64 conf/*.yaml
+	@tar czvf $(BINARY)-$(shell cat VERSION).darwin-amd64.tar.gz $(BINARY)_darwin_amd64 conf/*.conf
 	@echo ""
 	@rm $(BINARY)_linux_amd64
 	@rm $(BINARY)_darwin_amd64
@@ -81,7 +81,7 @@ misspell:
 clean:
 	@echo "==> Cleaning ..."
 	go clean -x -i .
-	rm -f $(BINARY)_*
+	rm -f $(BINARY) $(BINARY)_*
 	rm -rf *.out
 	rm -rf *.tar.gz
 	@echo ""
