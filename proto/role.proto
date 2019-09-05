@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package proto;
+
+// protoc --go_out=plugins=grpc:. *.proto
+
+service RoleService {
+    rpc Obtain(ObtainReq) returns (ObtainRsp) {}
+    rpc Abdicate(AbdicateReq) returns (AbdicateRsp) {}
+    rpc Promote(PromoteReq) returns (PromoteRsp) {}
+}
+
+enum EnumCode {
+    Success = 0;
+    Failure = 1;
+}
+
+enum EnumRole {
+    Candidate = 0;
+    Follower = 1;
+    Leader = 2;
+}
+
+message ObtainReq {
+}
+
+message ObtainRsp {
+    EnumCode code = 1;
+    EnumRole role = 2;
+    string msg = 3;
+}
+
+message AbdicateReq {
+}
+
+message AbdicateRsp {
+    EnumCode code = 1;
+    string msg = 2;
+}
+
+message PromoteReq {
+}
+
+message PromoteRsp {
+    EnumCode code = 1;
+    string msg = 2;
+}

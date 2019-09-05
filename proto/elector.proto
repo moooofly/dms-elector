@@ -1,22 +1,16 @@
 syntax = "proto3";
-package protobuf;
+
+import "role.proto";
+
+package proto;
 
 // protoc --go_out=plugins=grpc:. *.proto
 
-// protobuf for elector internal, only used by master-slave mode
+// NOTE: only for master-slave mode
 service Elector {
-    rpc PING (MsgPING) returns (MsgPONG) {
-    }
-    rpc SeekVote (MsgSeekVote) returns (MsgVote) {
-    }
-    rpc Abdicate (MsgAbdicate) returns (MsgPromoted) {
-    }
-}
-
-enum EnumRole {
-    CANDIDATE = 0;
-    FOLLOWER = 1;
-    LEADER = 2;
+    rpc PING (MsgPING) returns (MsgPONG) {}
+    rpc SeekVote (MsgSeekVote) returns (MsgVote) {}
+    rpc Abdicate (MsgAbdicate) returns (MsgPromoted) {}
 }
 
 message MsgPING {
