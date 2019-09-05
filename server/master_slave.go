@@ -18,6 +18,87 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+type electorOptions struct {
+	/************************* MS mode options *************************/
+	connTimeout            uint // connection timeout
+	seekVotePeriod         uint // seek vote period
+	seekVoteMaxTry         uint // seek vote max try
+	pingPeriod             uint // ping period
+	leaderTimeoutThreshold uint // leader timeout
+
+	// 20180425, fd, #leaderBootstrapPeriod
+	// The idea of `Leader Bootstrap Period' is introduced for slow-leader-bootstrap.
+	// When an elector startup as a leader, there might already be a leader alive, which will led to brain-split,
+	// even though this situation will be solved sooner or later, we do like to sweep this
+	// useless and error-prone period, especially as a DMS-Detector, which might make HaProxy redirect user
+	// connections to an unstable backend address when more than one leader alive at the same time.
+	// After the introduction of `Leader Bootstrap Period', a startup-leader will mark himself
+	// in leaderBootstrapState state, until:
+	// 1. for ms mode:
+	// 	  1.1 the every first communication succeed with the other elector (ms mode), or
+	//    1.2 timeout for leaderBootstrapState state (leaderBootstrapPeriod)
+	// 2. for cluster mode:
+	//    the every first try of ascend (cluster mode),
+	// to get the right role (follower instead, or leader still);
+	// during this state, all user requests for elector's role will be replied as RoleUnstable.
+	leaderBootstrapPeriod uint
+
+	/************************* CLUSTER mode options *************************/
+	protectionPeriod uint // protection period for leader
+}
+
+// electorOption config how the elector works
+type electorOption func(o *electorOptions)
+
+// WithLeaderBootStrapPeriod set the period among sending ping
+func WithLeaderBootStrapPeriod(period uint) electorOption {
+	return func(o *electorOptions) {
+		o.leaderBootstrapPeriod = period
+	}
+}
+
+// WithEleConnTimeout set the timeout for connect remote elector server
+func WithEleConnTimeout(timeout uint) electorOption {
+	return func(o *electorOptions) {
+		o.connTimeout = timeout
+	}
+}
+
+// WithSeekVotePeriod set the period among seeking vote
+func WithSeekVotePeriod(period uint) electorOption {
+	return func(o *electorOptions) {
+		o.seekVotePeriod = period
+	}
+}
+
+// WithSeekVoteMaxTry set the max time for seeking vote
+func WithSeekVoteMaxTry(try uint) electorOption {
+	return func(o *electorOptions) {
+		o.seekVoteMaxTry = try
+	}
+}
+
+// WithLeaderTimeout set how long we thought the leader is unreachable
+func WithLeaderTimeout(timeout uint) electorOption {
+	return func(o *electorOptions) {
+		o.leaderTimeoutThreshold = timeout
+	}
+}
+
+// WithPingPeriod set the period among sending ping
+func WithPingPeriod(period uint) electorOption {
+	return func(o *electorOptions) {
+		o.pingPeriod = period
+	}
+}
+
+// WithProtectionPeriod set the period of leader protection
+func WithProtectionPeriod(period uint) electorOption {
+	return func(o *electorOptions) {
+		o.protectionPeriod = period
+	}
+}
+
 /********** Master-slave mode elector **********/
 // elector (internal) event
 type eEvent struct {
@@ -26,83 +107,94 @@ type eEvent struct {
 	errCh chan error  // err chan, used as event handled signal as well
 }
 
-// MSElector is the elector used in master-slave mode
-type MSElector struct {
-	id    uint64 // elector id
-	role  Role   // elector role
-	epoch uint64 // elector current epoch
+// msElector is the elector used in master-slave mode
+type msElector struct {
+	id uint64 // elector id
+
+	role   Role   // elector role
+	epoch  uint64 // elector current epoch
+	stFile string // state file with role and epoch
+
 	count uint64 // ping counter as a leader
 	bid   uint64 // bid as a candidate
 
 	state electorState // elector running state
 
-	path string // persistence file path
+	local  string // local elector listening address
+	remote string // remote elector listening address
 
-	localEleHost  string // local election server host
-	remoteEleHost string // remote election server host
-
-	reqSrv *requestServer // user request server
+	rs *roleService // user request server
 
 	eleSrvLnr net.Listener // local election server listener
 	eleSrv    *grpc.Server // local election server
 
-	eleConnHandler *connHandler     // connection handler of elector
-	eleCliConn     *grpc.ClientConn // connection with remote election server
-	eleCli         pb.ElectorClient // client to remote election server
+	handler *connHandler // connection handler of elector
 
-	stopCh chan struct{} // stop signal
-	evCh   chan *eEvent  // elector event channel
+	clientConn *grpc.ClientConn // client connection to remote elector
+	eleCli     pb.ElectorClient // grpc client to remote elector
 
-	timer *time.Timer // general used timer
+	stopCh chan struct{}
+	evCh   chan *eEvent
 
-	options electorOptions // options
+	timer *time.Timer
+
+	options electorOptions
 }
 
-func doConnectRemoteEleSrvWrapper(args ...interface{}) error {
-	e := args[0].(*MSElector)
-	return e.doConnectRemoteEleSrv()
+// FIXME: only args[0] be used
+func doRemoteConnectWrapper(args ...interface{}) error {
+	e := args[0].(*msElector)
+	return e.doRemoteConnect()
 }
 
-func doCloseRemoteEleSrvWrapper(args ...interface{}) error {
-	e := args[0].(*MSElector)
-	return e.doCloseRemoteEleSrv()
+func doRemoteDisconnectWrapper(args ...interface{}) error {
+	e := args[0].(*msElector)
+	return e.doRemoteDisconnect()
 }
 
-// NewMSElector is the constructor of MSElector
+// NewmsElector is the constructor of msElector
 func NewMasterSlave(
-	stateFile string,
+	stfile string,
 	rsTcpHost, rsUnixHost string,
 	local, remote string,
-	opts ...ElectorOption,
-) *MSElector {
+	opts ...electorOption,
+) *msElector {
 
-	role, epoch := loadState(stateFile)
-	return newMasterSlaveWithInfo(stateFile, role, epoch, rsTcpHost, rsUnixHost, local, remote, opts...)
+	role, epoch := loadState(stfile)
+	return newMasterSlaveWithInfo(stfile, role, epoch, rsTcpHost, rsUnixHost, local, remote, opts...)
 }
 
-func newMasterSlaveWithInfo(path string, role Role, epoch uint64, reqSrvHost, reqSrvPath, localEleHost, remoteEleHost string, opts ...ElectorOption) *MSElector {
-	rand.Seed(time.Now().UnixNano())
-	ele := new(MSElector)
+func newMasterSlaveWithInfo(
+	stfile string,
+	role Role,
+	epoch uint64,
+	rsTcpHost, rsUnixHost string,
+	local, remote string,
+	opts ...electorOption,
+) *msElector {
+	ele := new(msElector)
 
 	ele.id = rand.Uint64()
+	ele.bid = rand.Uint64()
+
 	ele.role = role
 	ele.epoch = epoch
 	ele.count = 0
-	ele.bid = rand.Uint64()
 
 	ele.state = stateStopped
-	ele.path = path
+	ele.stFile = stfile
 
-	ele.reqSrv = newRequestServer(reqSrvHost, reqSrvPath, ele)
+	ele.rs = newRoleService(rsTcpHost, rsUnixHost, ele)
 
-	ele.localEleHost = localEleHost
-	ele.remoteEleHost = remoteEleHost
+	ele.local = local
+	ele.remote = remote
 
+	// TODO
 	// some default values
-	ele.options.eleConnTimeout = 30
+	ele.options.connTimeout = 30
 	ele.options.seekVotePeriod = 1
 	ele.options.seekVoteMaxTry = 5
-	ele.options.leaderTimeout = 15
+	ele.options.leaderTimeoutThreshold = 15
 	ele.options.pingPeriod = 1
 	ele.options.leaderBootstrapPeriod = 0
 
@@ -111,20 +203,20 @@ func newMasterSlaveWithInfo(path string, role Role, epoch uint64, reqSrvHost, re
 		o(&ele.options)
 	}
 
-	ele.eleConnHandler = &connHandler{connState: connStateDisconnect, connectF: nil, closeF: nil}
-	ele.eleConnHandler.registerConnFunc(doConnectRemoteEleSrvWrapper)
-	ele.eleConnHandler.registerCloseFunc(doCloseRemoteEleSrvWrapper)
+	ele.handler = &connHandler{connState: connStateDisconnect, connectF: nil, closeF: nil}
+	ele.handler.registerConnFunc(doRemoteConnectWrapper)
+	ele.handler.registerCloseFunc(doRemoteDisconnectWrapper)
 
 	return ele
 }
 
-// Info the elector
-func (e *MSElector) Info() ElectorInfo {
+// Info gets metadata of the elector
+func (e *msElector) Info() ElectorInfo {
 	return ElectorInfo{e.id, e.role, e.epoch}
 }
 
-// Start the elector
-func (e *MSElector) Start() error {
+// Start launch a master-slave elector
+func (e *msElector) Start() error {
 	if (e.state & stateRunning) != 0 {
 		return errors.New("has been started already")
 	}
@@ -135,61 +227,61 @@ func (e *MSElector) Start() error {
 	}
 
 	e.stopCh = make(chan struct{})
+	// FIXME: why
 	e.evCh = make(chan *eEvent, 1024)
 
-	// start local election server, return if failed
-	err := e.startLocalEleSrv()
+	// 启动 elector server
+	err := e.launchElector()
 	if err != nil {
-		logrus.Warnf("[%s] Cannot start local election server: %v", e.Info().String(), err)
+		logrus.Warnf("[master-slave] [%s] launch elector at [%s] failed: %v", e.Info().String(), e.local, err)
 		return err
 	}
-	logrus.Infof("[%s] Local election server started", e.Info().String())
+	logrus.Infof("[master-slave] [%s] launch elector at [%s] success", e.Info().String(), e.local)
 
-	// start local user request server
-	if e.reqSrv.tcpHost != "" || e.reqSrv.unixHost != "" {
-		if err := e.reqSrv.start(); err != nil {
-			logrus.Warnf("[%s] Cannot start local request server: %v", e.Info().String(), err)
-			return err
-		}
-	} else {
-		logrus.Warnf("[%s] Request server disabled", e.Info().String())
-	}
-
-	// connect to the other side elector
+	// FIXME: 是否应该不断一直重连
 	go func() {
 		for {
-			err = e.eleConnHandler.connect(e)
+			// connect to remote elector
+			err = e.handler.connect(e)
 			if err != nil {
-				logrus.Errorf("[%s] cannot connect to the other-side-elector when starting, wait for another try...",
-					e.Info().String())
+				logrus.Warningf("[master-slave] connect to remote[%s] failed, reason: %v", e.remote, err)
+				return
 			} else {
+				logrus.Infof("[master-slave] connect to remote[%s] success", e.remote)
 				return
 			}
 		}
 	}()
 
 	// main election loop
-	for (e.state & stateRunning) != 0 {
-		logrus.Infof("[%s] running as a %s now, at epoch %d", e.Info().String(), e.role.String(), e.epoch)
+	//for (e.state & stateRunning) != 0 {
+	if (e.state & stateRunning) != 0 {
+		logrus.Infof("[master-slave] [%s] running as [%s] at epoch [%d]", e.Info().String(), e.role.String(), e.epoch)
 
 		switch e.role {
 		case RoleCandidate:
-			e.candidateLoop()
+			go e.candidateLoop()
 		case RoleFollower:
-			e.followerLoop()
+			go e.followerLoop()
 		case RoleLeader:
-			e.leaderLoop()
+			go e.leaderLoop()
 		default:
-			logrus.Warnf("[%s] not an illegal role: %v, quitting", e.Info().String(), e.role)
-			return errors.New("not an illegal role")
+			logrus.Warnf("[master-slave] [%s] is not a legal role", e.role.String())
+			return errors.New("not a legal role")
 		}
+	}
+
+	// 启动 role service
+	if err := e.rs.Start(); err != nil {
+		logrus.Warnf("[master-slave] start grpc-role-service failed, reason: %v", err)
+		return err
 	}
 
 	return nil
 }
 
 // Stop the elector
-func (e *MSElector) Stop() {
+func (e *msElector) Stop() {
 	if (e.state & stateRunning) == 0 {
 		return
 	}
@@ -204,15 +296,15 @@ func (e *MSElector) Stop() {
 	if e.eleSrv != nil {
 		e.eleSrv.Stop()
 	}
-	e.eleConnHandler.close(e)
-	if e.reqSrv != nil {
-		e.reqSrv.stop()
+	e.handler.close(e)
+	if e.rs != nil {
+		e.rs.Stop()
 	}
-	saveState(e.path, e.role, e.epoch)
+	saveState(e.stFile, e.role, e.epoch)
 }
 
-// Role return the role of the elector
-func (e *MSElector) Role() Role {
+// Role gets the role of the elector
+func (e *msElector) Role() Role {
 	if (e.state & stateLeaderBootStrapping) != 0 {
 		return RoleUnstable
 	}
@@ -220,7 +312,7 @@ func (e *MSElector) Role() Role {
 }
 
 // Abdicate the leadership
-func (e *MSElector) Abdicate() {
+func (e *msElector) Abdicate() {
 	if (e.state&stateRunning) == 0 || e.role != RoleLeader {
 		return
 	}
@@ -229,7 +321,7 @@ func (e *MSElector) Abdicate() {
 }
 
 // Promote as a leader
-func (e *MSElector) Promote() {
+func (e *msElector) Promote() {
 	if (e.state&stateRunning) == 0 || e.role == RoleLeader {
 		return
 	}
@@ -237,95 +329,102 @@ func (e *MSElector) Promote() {
 	e.promote()
 }
 
-// Connect to the remote elector server
-func (e *MSElector) connectRemoteEleSrv() (*grpc.ClientConn, error) {
-	logrus.Infof("[%s] will try to connect remote election server", e.Info().String())
+// Connect to remote elector
+func (e *msElector) connectRemoteElector() (*grpc.ClientConn, error) {
+	logrus.Infof("[master-slave] [%s] --> try to connect remote elector[%s] ", e.Info().String(), e.remote)
 
 	conn, err := grpc.Dial(
-		e.remoteEleHost,
+		e.remote,
 		grpc.WithInsecure(),
 		grpc.WithBlock(),
 		grpc.WithTimeout(1*time.Second),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 30 * time.Second}))
 
 	if err != nil {
-		logrus.Warnf("[%s] cannot connect to remote election server: %v", e.Info().String(), err)
+		logrus.Warnf("[master-slave] [%s] connect remote elector failed, reason: %v", e.Info().String(), err)
 		return nil, err
 	}
 
-	logrus.Infof("[%s] connected", e.Info().String())
+	logrus.Infof("[master-slave] [%s] connect success", e.Info().String())
 	return conn, nil
 }
 
 // Do the real shit to connect with the remote election server
 // Should be registered as the connect function of connection by a layer of wrapper
-func (e *MSElector) doConnectRemoteEleSrv() error {
-	// NOTE: 20181011, fd
-	// introduce a new algorithm to try to connect remote elector server every pingPeriod second util
-	// connected, or timeout
+func (e *msElector) doRemoteConnect() error {
 	connC := make(chan *grpc.ClientConn)
+
+	// FIXME: 这里使用  pingPeriod 作为重连时间间隔是否合适
 	ticker := time.NewTicker(time.Duration(e.options.pingPeriod) * time.Second)
+	timeout := time.After(time.Duration(e.options.connTimeout) * time.Second)
+
 	once := new(sync.Once)
 
 	for {
 		select {
-		case <-time.After(time.Duration(e.options.eleConnTimeout) * time.Second):
-			logrus.Warnf("[%s] connection timeout!", e.Info().String())
-			return errors.New("connect failed")
+		case <-timeout:
+			logrus.Warnf("[master-slave] [%s] connect timeout after [%d]s", e.Info().String(), e.options.connTimeout)
+			return errors.New("connect timeout")
 
 		case c := <-connC:
-			e.eleCliConn = c
+			e.clientConn = c
 			e.eleCli = pb.NewElectorClient(c)
 			return nil
 
 		case <-ticker.C:
 			go func() {
-				conn, err := e.connectRemoteEleSrv()
+				c, err := e.connectRemoteElector()
 				if err == nil {
 					once.Do(func() {
 						ticker.Stop()
-						connC <- conn
+						connC <- c
 					})
 				}
 			}()
 		}
 	}
 
-	// should not be here
 	return errors.New("connect failed")
 }
 
 // Do the real shit to disconnect with the remote election server
 // Should be registered as the close function of connection by a layer of wrapper
-func (e *MSElector) doCloseRemoteEleSrv() error {
-	if e.eleCliConn != nil {
-		return e.eleCliConn.Close()
+func (e *msElector) doRemoteDisconnect() error {
+	if e.clientConn != nil {
+		return e.clientConn.Close()
 	}
 	return nil
 }
 
-// Start the local election server
-func (e *MSElector) startLocalEleSrv() error {
-	l, err := net.Listen("tcp", e.localEleHost)
+// start elector server in master-slave mode
+func (e *msElector) launchElector() error {
+	l, err := net.Listen("tcp", e.local)
 	if err != nil {
-		logrus.Warnf("[%s] cannot start local election server", e.Info().String())
+		logrus.Warnf("[master-slave]", err)
 		return err
 	}
 
-	srv := grpc.NewServer(grpc.KeepaliveParams(keepalive.ServerParameters{Time: 30 * time.Second,
-		Timeout: 30 * time.Second}))
+	srv := grpc.NewServer(
+		grpc.KeepaliveParams(
+			keepalive.ServerParameters{
+				Time:    30 * time.Second,
+				Timeout: 30 * time.Second,
+			},
+		),
+	)
 	pb.RegisterElectorServer(srv, &eleSrv{e})
 
 	e.eleSrvLnr = l
 	e.eleSrv = srv
 
+	// FIXME: no error process, is it ok?
 	go e.eleSrv.Serve(e.eleSrvLnr)
 
 	return nil
 }
 
 // Change elector's role from one to another, at a specific epoch
-func (e *MSElector) changeRole(from, to Role, epoch uint64) {
+func (e *msElector) changeRole(from, to Role, epoch uint64) {
 	if e.role == to || e.role != from {
 		return
 	}
@@ -334,33 +433,55 @@ func (e *MSElector) changeRole(from, to Role, epoch uint64) {
 	e.epoch = epoch
 	e.count = 0
 
-	saveState(e.path, e.role, e.epoch)
+	saveState(e.stFile, e.role, e.epoch)
 	logrus.Infof("[%s] role changed from %s to %s at epoch %d", e.Info().String(), from.String(), to.String(), epoch)
 }
 
-func (e *MSElector) nextEpoch() uint64 {
+func (e *msElector) nextEpoch() uint64 {
 	return e.epoch + 1
 }
 
-// Ping the other elector
-func (e *MSElector) ping() {
-	if (e.state&stateRunning) == 0 || e.role != RoleLeader || e.eleCli == nil || e.eleConnHandler.connState == connStateConnecting {
-		logrus.Debugf("[%s] refuse ping cause: s.state=%x, e.role=%v, e.eleCli=%v, e.connState=%s",
-			e.Info().String(), e.state, e.role, e.eleCli, e.eleConnHandler.state().String())
+// Ping remote elector
+func (e *msElector) ping() {
+	if e.role != RoleLeader {
+		logrus.Debugf("[master-slave] ping failed, reason: only Leader can ping remote, role => [%s]", e.role)
 		return
 	}
+
+	if e.eleCli == nil {
+		logrus.Debug("[master-slave] ping failed, reason: grpc client to remote elector => [nil]")
+		return
+	}
+
+	if e.handler.connState == connStateConnecting {
+		logrus.Debug("[master-slave] ping failed, reason: in [connStateConnecting]")
+		return
+	}
+
+	if (e.state & stateRunning) == 0 {
+		logrus.Debug("[master-slave] ping failed, reason: not in [stateRunning]")
+		return
+	}
+
+	/*
+		if (e.state&stateRunning) == 0 || e.role != RoleLeader || e.eleCli == nil || e.handler.connState == connStateConnecting {
+			logrus.Debugf("[master-slave] [%s] refuse ping cause: s.state=%x, e.role=%v, e.eleCli=%v, e.connState=%s",
+				e.Info().String(), e.state, e.role, e.eleCli, e.handler.state().String())
+			return
+		}
+	*/
 
 	var ping pb.MsgPING
 
 	ping.Id, ping.Role, ping.Epoch, ping.Count = e.id, pb.EnumRole(e.role), e.epoch, e.count
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(e.options.eleConnTimeout))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(e.options.connTimeout))
 	defer cancel()
 	r, err := e.eleCli.PING(ctx, &ping)
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unavailable:
-			if err := e.eleConnHandler.connect(e); err != nil {
+			if err := e.handler.connect(e); err != nil {
 				logrus.Infof("[%s] reconnect after a failed-ping failed: %v", e.Info().String(), err)
 			}
 		default:
@@ -372,23 +493,23 @@ func (e *MSElector) ping() {
 }
 
 // Seek vote from the other elector
-func (e *MSElector) seekVote() {
-	if (e.state&stateRunning) == 0 || e.role != RoleCandidate || e.eleCli == nil || e.eleConnHandler.connState == connStateConnecting {
+func (e *msElector) seekVote() {
+	if (e.state&stateRunning) == 0 || e.role != RoleCandidate || e.eleCli == nil || e.handler.connState == connStateConnecting {
 		logrus.Debugf("[%s] refuse seekVote cause: s.state=%x, e.role=%v, e.eleCli=%v, e.connState=%s",
-			e.Info().String(), e.state, e.role, e.eleCli, e.eleConnHandler.connState.String())
+			e.Info().String(), e.state, e.role, e.eleCli, e.handler.connState.String())
 		return
 	}
 
 	var seekVote pb.MsgSeekVote
 	seekVote.Id, seekVote.Role, seekVote.Epoch, seekVote.Bid = e.id, pb.EnumRole(e.role), e.epoch, e.bid
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(e.options.eleConnTimeout))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(e.options.connTimeout))
 	defer cancel()
 	vote, err := e.eleCli.SeekVote(ctx, &seekVote)
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unavailable:
-			if err := e.eleConnHandler.connect(e); err != nil {
+			if err := e.handler.connect(e); err != nil {
 				logrus.Infof("[%s] reconnect after a failed-seekvote failed: %v", e.Info().String(), err)
 			}
 		default:
@@ -407,7 +528,7 @@ func (e *MSElector) seekVote() {
 // 3. send an abdicate-message to the other side to make him turn to a leader;
 // 4. wait for the reply, which should be a promoted-message, put it to elector machine loop to clear the
 // 	  abdicating bit.
-func (e *MSElector) abdicate() {
+func (e *msElector) abdicate() {
 	if (e.state&stateRunning) == 0 || (e.state&stateRoleChanging) != 0 || e.role != RoleLeader || e.eleCli == nil {
 		logrus.Debugf("[%s] refuse abdicate user request cause: s.state=%x, e.role=%v, e.eleCli=%v",
 			e.Info().String(), e.state, e.role, e.eleCli)
@@ -425,19 +546,19 @@ func (e *MSElector) abdicate() {
 
 	logrus.Infof("[%s] signal of abdicate on the local side has been send", e.Info().String())
 
-	if e.eleConnHandler.connState == connStateConnecting {
+	if e.handler.connState == connStateConnecting {
 		logrus.Debugf("[%s] skip sending abdicate user request cause connecting to the other side elector",
 			e.Info().String())
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(e.options.eleConnTimeout))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(e.options.connTimeout))
 	defer cancel()
 	promoted, err := e.eleCli.Abdicate(ctx, &abdicate)
 	if err != nil {
 		switch status.Code(err) {
 		case codes.Unavailable:
-			if err := e.eleConnHandler.connect(e); err != nil {
+			if err := e.handler.connect(e); err != nil {
 				logrus.Infof("[%s] reconnect after a failed-abdicate failed: %v", e.Info().String(), err)
 			}
 		default:
@@ -454,7 +575,7 @@ func (e *MSElector) abdicate() {
 // 1. set the promoting bit;
 // 2. put an promote-user-request-event into elector machine loop to turn to leader **IMMEDIATELY**,
 //    the promoting bit will be clear after the role has been changed.
-func (e *MSElector) promote() {
+func (e *msElector) promote() {
 	if (e.state&stateRunning) == 0 || (e.state&stateRoleChanging) != 0 || e.role == RoleLeader {
 		logrus.Debugf("[%s] refuse promote user request cause: s.state=%x, e.role=%v, e.eleCli=%v",
 			e.Info().String(), e.state, e.role, e.eleCli)
@@ -479,7 +600,7 @@ func (e *MSElector) promote() {
 //		4) Vote: nothing to do, ignore;
 // 		5) Abdicate: nothing to do in fact, but reply anyway;
 //		6) Promoted: nothing to do.
-func (e *MSElector) leaderLoop() {
+func (e *msElector) leaderLoop() {
 	var pingTicker = time.NewTicker(time.Duration(e.options.pingPeriod) * time.Second)
 	var once = new(sync.Once)
 
@@ -488,10 +609,10 @@ func (e *MSElector) leaderLoop() {
 		if (e.state & stateLeaderBootStrapping) != 0 {
 			once.Do(func() {
 				go time.AfterFunc(time.Duration(e.options.leaderBootstrapPeriod)*time.Second, func() {
-					logrus.Debugf("[%s] clear stateLeaderBootStrapping bit cuz timeout", e.Info().String())
+					logrus.Debugf("[master-slave] [%s] clear stateLeaderBootStrapping bit cuz timeout", e.Info().String())
 					e.state &^= stateLeaderBootStrapping
 				})
-				logrus.Debugf("[%s] leaderBootstrapTimer has been set", e.Info().String())
+				logrus.Debugf("[master-slave] [%s] leaderBootstrapTimer has been set", e.Info().String())
 			})
 		}
 
@@ -575,8 +696,8 @@ func (e *MSElector) leaderLoop() {
 //		4) Vote: nothing to do, ignore;
 // 		5) Abdicate: promote and reply a promoted message, if I am not already in abdicating state;
 //		6) Promoted: clear the abdicating flag if any.
-func (e *MSElector) followerLoop() {
-	e.timer = time.NewTimer(time.Duration(e.options.leaderTimeout) * time.Second)
+func (e *msElector) followerLoop() {
+	e.timer = time.NewTimer(time.Duration(e.options.leaderTimeoutThreshold) * time.Second)
 
 	for (e.state&stateRunning) != 0 && e.role == RoleFollower {
 		select {
@@ -608,13 +729,13 @@ func (e *MSElector) followerLoop() {
 				pev := ev.(*pb.MsgPING)
 				if e.epoch != pev.Epoch {
 					e.epoch = pev.Epoch
-					saveState(e.path, e.role, e.epoch)
+					saveState(e.stFile, e.role, e.epoch)
 				}
 
 				if !e.timer.Stop() {
 					<-e.timer.C
 				}
-				e.timer.Reset(time.Duration(e.options.leaderTimeout) * time.Second)
+				e.timer.Reset(time.Duration(e.options.leaderTimeoutThreshold) * time.Second)
 
 				// NOTE: fd, 20181214
 				// let follower reply a pong with the same count as the ping just received
@@ -670,7 +791,7 @@ func (e *MSElector) followerLoop() {
 //		4) Vote: promote if the other elector agreed;
 // 		5) Abdicate: promote, reply a promoted message;
 //		6) Promoted: nothing to do, ignore.
-func (e *MSElector) candidateLoop() {
+func (e *msElector) candidateLoop() {
 	var cnt uint
 	var seekVoteTicker = time.NewTicker(time.Second * time.Duration(e.options.seekVotePeriod))
 
@@ -712,7 +833,7 @@ func (e *MSElector) candidateLoop() {
 				if vev.Agreed {
 					e.changeRole(RoleCandidate, RoleLeader, e.nextEpoch())
 				} else {
-					if vev.Role == pb.EnumRole_LEADER {
+					if vev.Role == pb.EnumRole_Leader {
 						e.changeRole(RoleCandidate, RoleFollower, vev.Epoch)
 					}
 				}
@@ -738,7 +859,7 @@ func (e *MSElector) candidateLoop() {
 
 /********** master-slave mode election gRPC server **********/
 type eleSrv struct {
-	e *MSElector
+	e *msElector
 }
 
 func (es *eleSrv) sanityCheck(ctx context.Context) error {
@@ -754,7 +875,7 @@ func (es *eleSrv) sanityCheck(ctx context.Context) error {
 		return status.Error(codes.DataLoss, "failed to get peer address")
 	}
 
-	from, expect = strings.Split(pr.Addr.String(), ":")[0], strings.Split(es.e.remoteEleHost, ":")[0]
+	from, expect = strings.Split(pr.Addr.String(), ":")[0], strings.Split(es.e.remote, ":")[0]
 	if from != expect {
 		logrus.Infof("[%s] has refused a PING from [%s] because unexpected ip", es.e.Role().String(), from)
 		return errors.New("not the target host to connect")
