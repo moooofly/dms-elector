@@ -11,16 +11,16 @@ import (
 // spElector is the elector when running in single point mode,
 // it has nothing meaningful in fact cuz no need to build a leader-follower relationship,
 // but used as well...
+
+// NOTE: id here seems useless
 type spElector struct {
 	id    uint64
 	role  Role
 	epoch uint64
 
-	status electorState
+	stFile string // state file with role and epoch
 
-	stFile string // persistence file path
-
-	reqSrv *requestServer // user request server
+	rs *roleService // gRPC service
 }
 
 // NewSinglePoint is the constructor of spElector
@@ -30,56 +30,49 @@ func NewSinglePoint(stfile, rsTcpHost, rsUnixHost string) *spElector {
 }
 
 func newSinglePointWithInfo(stfile string, role Role, rsTcpHost, rsUnixHost string) *spElector {
-	ele := new(spElector)
+	e := new(spElector)
 
-	ele.id = rand.Uint64()
-	ele.role = role
-	ele.epoch = 0
-	ele.status = stateStopped
-	ele.stFile = stfile
+	e.id = rand.Uint64()
+	e.role = role
+	e.epoch = 0
+	e.stFile = stfile
 
-	ele.reqSrv = newRequestServer(rsTcpHost, rsUnixHost, ele)
+	e.rs = newRoleService(rsTcpHost, rsUnixHost, e)
 
-	return ele
+	return e
 }
 
-// Info the elector
+// Info gets metadata of the elector
 func (e *spElector) Info() ElectorInfo {
 	return ElectorInfo{e.id, e.role, e.epoch}
 }
 
-// Start the elector
+// Start launch a single-point elector
 func (e *spElector) Start() error {
-	e.status = stateRunning
-	// NOTE: fd, 20180511
-	// always start as a leader in single-point mode
+	// NOTE: always start as a leader in single-point mode
 	e.updateRole(e.role, RoleLeader)
 
-	if e.reqSrv.tcpHost != "" || e.reqSrv.unixHost != "" {
-		if err := e.reqSrv.start(); err != nil {
-			logrus.Warnf("[%s] Cannot start local request server: %v", e.Info().String(), err)
-			return err
-		}
-	} else {
-		logrus.Warnf("[%s] Request server disabled", e.Info().String())
+	if err := e.rs.Start(); err != nil {
+		logrus.Warnf("[single-point] start grpc-role-service failed, reason: %v", err)
+		return err
 	}
 
 	return nil
 }
 
-// Stop the elector
+// Stop stops the single-point elector
 func (e *spElector) Stop() {
-	e.status = stateStopped
 	saveState(e.stFile, e.role, 0)
-	e.reqSrv.stop()
+
+	e.rs.Stop()
 }
 
-// Role return the elector's role now, which is useless in fact
+// Role gets the role of the elector
 func (e *spElector) Role() Role {
 	return e.role
 }
 
-// Abdicate the leadership, which is useless in fact
+// Abdicate the leadership
 func (e *spElector) Abdicate() {
 	if e.role != RoleLeader {
 		return
@@ -88,7 +81,7 @@ func (e *spElector) Abdicate() {
 	e.updateRole(RoleLeader, RoleFollower)
 }
 
-// Promote as a leader, which is useless in fact
+// Promote as a leader
 func (e *spElector) Promote() {
 	if e.role == RoleLeader {
 		return
@@ -101,7 +94,6 @@ func (e *spElector) updateRole(from, to Role) {
 	if e.role == to || e.role != from {
 		return
 	}
-
 	e.role = to
 
 	saveState(e.stFile, e.role, 0)
