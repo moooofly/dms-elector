@@ -30,14 +30,11 @@ type single struct {
 
 // [master-slave] section in .ini
 type ms struct {
-	Local                  string `ini:"local-elector-server-host"`
-	Remote                 string `ini:"remote-elector-server-host"`
-	ConnTimeout            uint   `ini:"remote-elector-server-connect-timeout"`
-	SeekVotePeriod         uint   `ini:"seek-vote-period"`
-	SeekVoteMaxTry         uint   `ini:"seek-vote-max-try"`
-	PingPeriod             uint   `ini:"ping-period"`
-	LeaderTimeoutThreshold uint   `ini:"leader-timeout"`
-	LeaderBootstrapPeriod  uint   `ini:"leader-bootstrap-period"`
+	Local         string `ini:"local-elector-server-host"`
+	Remote        string `ini:"remote-elector-server-host"`
+	RetryPeriod   uint   `ini:"retry-period"`
+	PingPeriod    uint   `ini:"ping-period"`
+	LeaderTimeout uint   `ini:"leader-timeout"`
 }
 
 // [cluster] section in .ini

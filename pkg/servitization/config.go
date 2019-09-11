@@ -30,12 +30,6 @@ var zkClusterHost []string
 var zkLeaderDir string
 var protectionPeriod uint
 
-func printBanner() {
-	logrus.Infof("======================= ELECTOR ========================")
-	logrus.Infof("version: %s", version.Version)
-	logrus.Infof("======================= ======= ========================")
-}
-
 // CLI facilities
 var (
 	app *kingpin.Application
@@ -51,6 +45,7 @@ func Init() (err error) {
 	// 定制 logrus 日志格式
 	logrus.SetFormatter(&logrus.TextFormatter{
 		TimestampFormat: "2006/01/02 - 15:04:05",
+		FullTimestamp:   true,
 	})
 
 	app = kingpin.New("elector", "This is a component of dms called elector.")
@@ -58,6 +53,7 @@ func Init() (err error) {
 
 	// global settings
 	dbg = app.Flag("debug", "debug log output").Default("false").Bool()
+	level := app.Flag("level", "control the log level for debug output only").Default("debug").String()
 	prof = app.Flag("prof", "generate all kinds of profile into files").Default("false").Bool()
 	daemon := app.Flag("daemon", "run elector in background").Default("false").Bool()
 	forever := app.Flag("forever", "run elector in forever, fail and retry").Default("false").Bool()
@@ -73,7 +69,25 @@ func Init() (err error) {
 	if *dbg {
 		Output = os.Stdout
 		logrus.SetOutput(Output)
-		logrus.SetLevel(logrus.DebugLevel)
+		//logrus.SetLevel(logrus.DebugLevel)
+
+		if *level != "" {
+			switch *level {
+			case "debug":
+				logrus.SetLevel(logrus.DebugLevel)
+			case "info":
+				logrus.SetLevel(logrus.InfoLevel)
+			case "warn":
+				logrus.SetLevel(logrus.WarnLevel)
+			case "error":
+				logrus.SetLevel(logrus.ErrorLevel)
+			default:
+				logrus.Warnf("wrong level setting, defaut to [debug]")
+				logrus.SetLevel(logrus.DebugLevel)
+			}
+		} else {
+			logrus.SetLevel(logrus.DebugLevel)
+		}
 	} else {
 		// log setting
 		if *nolog {
@@ -210,12 +224,9 @@ func Init() (err error) {
 			parser.MasterSlaveSetting.Local,
 			parser.MasterSlaveSetting.Remote,
 
-			server.WithEleConnTimeout(parser.MasterSlaveSetting.ConnTimeout),
-			server.WithSeekVotePeriod(parser.MasterSlaveSetting.SeekVotePeriod),
-			server.WithSeekVoteMaxTry(parser.MasterSlaveSetting.SeekVoteMaxTry),
+			server.WithRetryPeriod(parser.MasterSlaveSetting.RetryPeriod),
 			server.WithPingPeriod(parser.MasterSlaveSetting.PingPeriod),
-			server.WithLeaderTimeout(parser.MasterSlaveSetting.LeaderTimeoutThreshold),
-			server.WithLeaderBootStrapPeriod(parser.MasterSlaveSetting.LeaderBootstrapPeriod),
+			server.WithLeaderTimeout(parser.MasterSlaveSetting.LeaderTimeout),
 		)
 	case "cluster":
 		el = server.NewClusterElector(
@@ -247,8 +258,6 @@ func Init() (err error) {
 }
 
 func Teardown() {
-	logrus.Info("elector stopping...")
-
 	if cmd != nil {
 		logrus.Infof("clean process %d", cmd.Process.Pid)
 		cmd.Process.Kill()

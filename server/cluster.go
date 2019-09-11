@@ -59,12 +59,12 @@ func doCloseRemoteZkWrapper(args ...interface{}) error {
 }
 
 // NewClusterElector is the constructor of ClusterElector
-func NewClusterElector(path, reqSrvHost, reqSrvPath string, zkHost []string, zkLeaderDir string, opts ...ElectorOption) *ClusterElector {
+func NewClusterElector(path, reqSrvHost, reqSrvPath string, zkHost []string, zkLeaderDir string, opts ...electorOption) *ClusterElector {
 	role, _ := loadState(path)
 	return newClusterElectorWithInfo(path, role, reqSrvHost, reqSrvPath, zkHost, zkLeaderDir, opts...)
 }
 
-func newClusterElectorWithInfo(path string, role Role, reqSrvHost, reqSrvPath string, zkHost []string, zkLeaderDir string, opts ...ElectorOption) *ClusterElector {
+func newClusterElectorWithInfo(path string, role Role, reqSrvHost, reqSrvPath string, zkHost []string, zkLeaderDir string, opts ...electorOption) *ClusterElector {
 	var e ClusterElector
 
 	e.id = rand.Uint64()
@@ -135,7 +135,7 @@ func (e *ClusterElector) Start() error {
 }
 
 // Stop the elector
-func (e *ClusterElector) Stop() {
+func (e *ClusterElector) Stop() error {
 	logrus.Infof("[%d] stopping", e.id)
 	e.state = stateStopped
 	close(e.stopCh)
@@ -143,6 +143,8 @@ func (e *ClusterElector) Stop() {
 	if e.reqSrv != nil {
 		e.reqSrv.stop()
 	}
+
+	return nil
 }
 
 // Role return the role of the elector
