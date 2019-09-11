@@ -61,10 +61,16 @@ func (e *spElector) Start() error {
 }
 
 // Stop stops the single-point elector
-func (e *spElector) Stop() {
-	saveState(e.stFile, e.role, 0)
+func (e *spElector) Stop() error {
+	if err := saveState(e.stFile, e.role, 0); err != nil {
+		return err
+	}
 
-	e.rs.Stop()
+	if err := e.rs.Stop(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Role gets the role of the elector

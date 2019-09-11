@@ -3,15 +3,74 @@ package server
 import (
 	"errors"
 	"fmt"
+	"log"
+	"math"
+	"math/big"
+	"math/rand"
+	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/moooofly/dms-elector/pkg/util"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc/peer"
+
+	cryptRand "crypto/rand"
 )
 
-////////////////////////////////////////////////////////////////////////////
-// Connection
-////////////////////////////////////////////////////////////////////////////
+func init() {
+	n, err := cryptRand.Int(cryptRand.Reader, big.NewInt(math.MaxInt64))
+	var seed int64
+	if err != nil {
+		seed = time.Now().UnixNano()
+	} else {
+		seed = n.Int64()
+	}
+
+	rand.Seed(seed)
+}
+
+type electorOptions struct {
+	// options for master-slave mode
+	retryPeriod   uint // retry period of re-connect
+	pingPeriod    uint // ping period
+	leaderTimeout uint // leader timeout
+
+	// options for cluster mode
+	protectionPeriod uint // protection period for leader
+}
+
+type electorOption func(o *electorOptions)
+
+// WithRetryPeriod set the retry period for re-connection
+func WithRetryPeriod(retryPeriod uint) electorOption {
+	return func(o *electorOptions) {
+		o.retryPeriod = retryPeriod
+	}
+}
+
+// WithLeaderTimeout set how long we thought the leader is unreachable
+func WithLeaderTimeout(timeout uint) electorOption {
+	return func(o *electorOptions) {
+		o.leaderTimeout = timeout
+	}
+}
+
+// WithPingPeriod set the period among sending ping
+func WithPingPeriod(period uint) electorOption {
+	return func(o *electorOptions) {
+		o.pingPeriod = period
+	}
+}
+
+// WithProtectionPeriod set the period of leader protection
+func WithProtectionPeriod(period uint) electorOption {
+	return func(o *electorOptions) {
+		o.protectionPeriod = period
+	}
+}
+
 type connState uint
 
 const (
@@ -58,8 +117,7 @@ func (conn *connHandler) connect(args ...interface{}) error {
 	var err error
 
 	if conn.connectF == nil {
-		err = errors.New("connect function not registered")
-		return err
+		return errors.New("connect function not registered")
 	}
 
 	conn.Mutex.Lock()
@@ -105,12 +163,8 @@ func (conn *connHandler) state() connState {
 	return conn.connState
 }
 
-////////////////////////////////////////////////////////////////////////////
-// Roles
-////////////////////////////////////////////////////////////////////////////
-
 // Role represents the role of the elector
-type Role uint
+type Role int32
 
 const (
 	// RoleCandidate represents a candidate
@@ -170,9 +224,10 @@ const (
 	stateRunning = 0x1000
 
 	stateLeaderBootStrapping = 0x0100
-	stateRoleChanging        = 0x0010
-	stateAbdicating          = stateRoleChanging | 0x0001
-	statePromoting           = stateRoleChanging | 0x0002
+
+	stateRoleChanging = 0x0010
+	stateAbdicating   = stateRoleChanging | 0x0001
+	statePromoting    = stateRoleChanging | 0x0002
 )
 
 type userRequest uint
@@ -185,7 +240,7 @@ const (
 // Elector is the interface of all kinds of electors
 type Elector interface {
 	Start() error
-	Stop()
+	Stop() error
 	Info() ElectorInfo
 	Abdicate()
 	Promote()
@@ -199,96 +254,14 @@ type ElectorInfo struct {
 }
 
 func (ebi ElectorInfo) String() string {
-	return fmt.Sprintf("0x%x, %s, 0x%x", ebi.id, ebi.role.StringShort(), ebi.epoch)
+	//return fmt.Sprintf("0x%x, %s, 0x%x", ebi.id, ebi.role.StringShort(), ebi.epoch)
+	return fmt.Sprintf("%s, epoch:0x%x", ebi.role.String(), ebi.epoch)
 }
 
-type electorOptions struct {
-	/************************* MS mode options *************************/
-	eleConnTimeout uint // connection timeout
-	seekVotePeriod uint // seek vote period
-	seekVoteMaxTry uint // seek vote max try
-	leaderTimeout  uint // leader timeout
-	pingPeriod     uint // ping period
-
-	// 20180425, fd, #leaderBootstrapPeriod
-	// The idea of `Leader Bootstrap Period' is introduced for slow-leader-bootstrap.
-	// When an elector startup as a leader, there might already be a leader alive, which will led to brain-split,
-	// even though this situation will be solved sooner or later, we do like to sweep this
-	// useless and error-prone period, especially as a DMS-Detector, which might make HaProxy redirect user
-	// connections to an unstable backend address when more than one leader alive at the same time.
-	// After the introduction of `Leader Bootstrap Period', a startup-leader will mark himself
-	// in leaderBootstrapState state, until:
-	// 1. for ms mode:
-	// 	  1.1 the every first communication succeed with the other elector (ms mode), or
-	//    1.2 timeout for leaderBootstrapState state (leaderBootstrapPeriod)
-	// 2. for cluster mode:
-	//    the every first try of ascend (cluster mode),
-	// to get the right role (follower instead, or leader still);
-	// during this state, all user requests for elector's role will be replied as RoleUnstable.
-	leaderBootstrapPeriod uint
-
-	/************************* CLUSTER mode options *************************/
-	protectionPeriod uint // protection period for leader
-}
-
-// ElectorOption config how the elector works
-type ElectorOption func(o *electorOptions)
-
-// WithLeaderBootStrapPeriod set the period among sending ping
-func WithLeaderBootStrapPeriod(period uint) ElectorOption {
-	return func(o *electorOptions) {
-		o.leaderBootstrapPeriod = period
-	}
-}
-
-// WithEleConnTimeout set the timeout for connect remote elector server
-func WithEleConnTimeout(timeout uint) ElectorOption {
-	return func(o *electorOptions) {
-		o.eleConnTimeout = timeout
-	}
-}
-
-// WithSeekVotePeriod set the period among seeking vote
-func WithSeekVotePeriod(period uint) ElectorOption {
-	return func(o *electorOptions) {
-		o.seekVotePeriod = period
-	}
-}
-
-// WithSeekVoteMaxTry set the max time for seeking vote
-func WithSeekVoteMaxTry(try uint) ElectorOption {
-	return func(o *electorOptions) {
-		o.seekVoteMaxTry = try
-	}
-}
-
-// WithLeaderTimeout set how long we thought the leader is unreachable
-func WithLeaderTimeout(timeout uint) ElectorOption {
-	return func(o *electorOptions) {
-		o.leaderTimeout = timeout
-	}
-}
-
-// WithPingPeriod set the period among sending ping
-func WithPingPeriod(period uint) ElectorOption {
-	return func(o *electorOptions) {
-		o.pingPeriod = period
-	}
-}
-
-// WithProtectionPeriod set the period of leader protection
-func WithProtectionPeriod(period uint) ElectorOption {
-	return func(o *electorOptions) {
-		o.protectionPeriod = period
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////
-// Helper functions
-////////////////////////////////////////////////////////////////////////////
 func loadState(path string) (role Role, epoch uint64) {
 	content, err := util.ReadFile(path)
 	if err != nil {
+		log.Println(err)
 		return role, epoch
 	}
 
@@ -324,4 +297,20 @@ func saveState(path string, role Role, epoch uint64) error {
 	lines = append(lines, []string{"Epoch", fmt.Sprintf("%d", epoch)})
 
 	return util.WriteFile(path, lines)
+}
+
+func getClietAddr(ctx context.Context) (string, error) {
+	pr, ok := peer.FromContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("[getClinetIP] invoke FromContext() failed")
+	}
+	if pr.Addr == net.Addr(nil) {
+		return "", fmt.Errorf("[getClientIP] peer.Addr is nil")
+	}
+
+	// NOTE: maybe only ip is enough?
+	//addSlice := strings.Split(pr.Addr.String(), ":")
+	//return addSlice[0], nil
+
+	return pr.Addr.String(), nil
 }
