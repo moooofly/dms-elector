@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+import "role.proto";
+
+package proto;
+
+// protoc --go_out=plugins=grpc:. *.proto
+
+// NOTE: only for master-slave mode
+service Elector {
+    rpc PING (MsgPING) returns (MsgPONG) {}
+    rpc SeekVote (MsgSeekVote) returns (MsgVote) {}
+    rpc Abdicate (MsgAbdicate) returns (MsgPromoted) {}
+}
+
+message MsgPING {
+    uint64 id = 1;
+    EnumRole role = 2;
+    uint64 epoch = 3;
+    uint64 count = 4;
+}
+
+message MsgPONG {
+    uint64 id = 1;
+    EnumRole role = 2;
+    uint64 epoch = 3;
+    uint64 count = 4;
+}
+
+message MsgSeekVote {
+    uint64 id = 1;
+    EnumRole role = 2;
+    uint64 epoch = 3;
+    uint64 bid = 4;
+}
+
+message MsgVote {
+    uint64 id = 1;
+    EnumRole role = 2;
+    uint64 epoch = 3;
+    bool agreed = 4;
+}
+
+message MsgAbdicate {
+    uint64 id = 1;
+    EnumRole role = 2;
+    uint64 epoch = 3;
+}
+
+message MsgPromoted {
+    uint64 id = 1;
+    EnumRole role = 2;
+    uint64 epoch = 3;
+    bool promoted = 4;
+}

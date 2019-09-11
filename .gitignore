@@ -1,0 +1,4 @@
+elector
+
+proto/*.pb.go
+server/*.pst
