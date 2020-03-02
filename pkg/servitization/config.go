@@ -19,12 +19,6 @@ import (
 
 var el server.Elector
 
-const (
-	logLevelDebug = logrus.DebugLevel
-	logLevelInfo  = logrus.InfoLevel
-	logLevelWarn  = logrus.WarnLevel
-)
-
 // TODO: keep for cluster for now
 var zkClusterHost []string
 var zkLeaderDir string
@@ -57,19 +51,19 @@ func Init() (err error) {
 	prof = app.Flag("prof", "generate all kinds of profile into files").Default("false").Bool()
 	daemon := app.Flag("daemon", "run elector in background").Default("false").Bool()
 	forever := app.Flag("forever", "run elector in forever, fail and retry").Default("false").Bool()
-	logfile := app.Flag("log", "log file path").Default("").String()
+	logfile := app.Flag("log-file", "log file, e.g. '/opt/log/dms/elector.log'").Default("").String()
+	confPath := app.Flag("conf-path", "config file path, e.g. '/opt/config/dms'").Default("conf").String()
 	nolog := app.Flag("nolog", "turn off logging").Default("false").Bool()
 
 	_ = kingpin.MustParse(app.Parse(os.Args[1:]))
 
 	// ini 配置解析
-	parser.Load()
+	parser.Load(*confPath)
 
 	// log setting
 	if *dbg {
 		Output = os.Stdout
 		logrus.SetOutput(Output)
-		//logrus.SetLevel(logrus.DebugLevel)
 
 		if *level != "" {
 			switch *level {
@@ -100,8 +94,8 @@ func Init() (err error) {
 			}
 			Output = f
 			logrus.SetOutput(Output)
-		} else if parser.GlobalSetting.LogPath != "" {
-			f, err := os.OpenFile(parser.GlobalSetting.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		} else if parser.GlobalSetting.LogFile != "" {
+			f, err := os.OpenFile(parser.GlobalSetting.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 			if err != nil {
 				logrus.Fatal(err)
 			}

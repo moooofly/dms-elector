@@ -38,7 +38,9 @@ type msElector struct {
 	stFile string // state file with role and epoch
 	local  string // local elector listening address
 	remote string // remote elector listening address
-	rs     *roleService
+
+	rs *roleService
+	//reqSrv *requestServer // only for backward compatibility
 
 	options electorOptions
 
@@ -60,7 +62,9 @@ type msElector struct {
 	stopCh         chan bool
 	disconnectedCh chan bool
 	connectedCh    chan bool
-	evCh           chan *eEvent
+
+	evCh          chan *eEvent
+	userRequestCh chan *eEvent
 
 	backgroundConnectionDoneCh chan bool
 
@@ -96,7 +100,21 @@ func newMasterSlaveWithInfo(
 	ms.stFile = stfile
 	ms.local = local
 	ms.remote = remote
+
+	// FIXME
 	ms.rs = newRoleService(rsTcpHost, rsUnixHost, ms)
+
+	// NOTE: only for backward compatibility
+	/*
+		sli := strings.Split(rsTcpHost, ":")
+		port, _ := strconv.Atoi(sli[1])
+		oldTcpHost := fmt.Sprintf("%s:%d", sli[0], port+1)
+
+		ms.reqSrv = newRequestServer(oldTcpHost, rsUnixHost, ms)
+	*/
+
+	// ----
+
 	ms.count = 0
 
 	// TODO: set default values in an appropriate way
@@ -116,27 +134,57 @@ func (e *msElector) Role() Role {
 	return e.role
 }
 
+// elector interface implementation
+
 // Info gets metadata of the elector
 func (e *msElector) Info() ElectorInfo {
 	return ElectorInfo{e.id, e.role, e.epoch}
 }
 
-// Abdicate the leadership
+// Abdicate yields leadership to another elector
 func (e *msElector) Abdicate() {
-	if e.role != RoleLeader {
+
+	// NOTE: we should make local elector abdicate even if
+	//       the connection to remote elector is lost
+
+	// Step 1: abdicate from leader to follower locally
+	defer func() {
+		e.userRequestCh <- &eEvent{userRequestAbdicate, nil, nil}
+	}()
+
+	// Step 2: tell remote elector what happens here
+	abdicate := pb.MsgAbdicate{
+		Id:    e.id,
+		Role:  pb.EnumRole(e.role),
+		Epoch: e.epoch,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	// 告诉 remote elector 自己要退位了
+	abdicateRsp, err := e.electorClient.Abdicate(ctx, &abdicate)
+	if err != nil {
+		logrus.Warnf("[%s] --> send [Abdicate] to remote elector failed, reason: %v", e.Role().String(), err)
+		e.setStateDisconnected(err)
 		return
 	}
 
-	e.abdicate()
+	logrus.Infof("[%s] --> send [Abdicate] to remote elector => [%s]", e.Role().String(), abdicate.String())
+
+	e.evCh <- &eEvent{abdicateRsp, nil, nil}
 }
 
-// Promote to the leader
+// Promote myself to Leader
 func (e *msElector) Promote() {
 	if e.role == RoleLeader {
+		logrus.Warnf("[%s] promote failed, reason: Leader need not to promote", e.Role().String())
 		return
 	}
 
-	e.promote()
+	e.userRequestCh <- &eEvent{userRequestPromote, nil, nil}
+
+	logrus.Infof("[%s] make [%s] to promote locally", e.Role().String(), e.Role().String())
 }
 
 // Stop shuts down all the connections and resources
@@ -174,6 +222,16 @@ func (e *msElector) Stop() error {
 	// Ensure that the backgroundConnector returns
 	<-e.backgroundConnectionDoneCh
 
+	if e.rs != nil {
+		e.rs.Stop()
+	}
+
+	/*
+		if e.reqSrv != nil {
+			e.reqSrv.stop()
+		}
+	*/
+
 	saveState(e.stFile, e.role, e.epoch)
 
 	return err
@@ -194,6 +252,7 @@ func (e *msElector) Start() (err error) {
 
 		// FIXME:
 		e.evCh = make(chan *eEvent, 1024)
+		e.userRequestCh = make(chan *eEvent, 100)
 
 		e.backgroundConnectionDoneCh = make(chan bool)
 		e.mu.Unlock()
@@ -212,7 +271,6 @@ func (e *msElector) Start() (err error) {
 		if err = e.connect(); err == nil {
 			e.setStateConnected()
 		} else {
-			logrus.Warnf("[%s] connect failed, reason: %v", e.Role().String(), err)
 			e.setStateDisconnected(err)
 		}
 
@@ -220,11 +278,20 @@ func (e *msElector) Start() (err error) {
 
 		go e.mainLoop()
 
+		// step pre-2: 启动 request server
+		/*
+			if err = e.reqSrv.start(); err != nil {
+				// FIXME: 直接使用 Fatalf ?
+				logrus.Warnf("[master-slave] start request server failed, reason: %v", err)
+			}
+		*/
+
 		// step 2: 启动 role service
 		if err = e.rs.Start(); err != nil {
 			// FIXME: 直接使用 Fatalf ?
 			logrus.Warnf("[master-slave] start grpc-role-service failed, reason: %v", err)
 		}
+
 	})
 
 	return err
@@ -275,11 +342,11 @@ func (e *msElector) connectRemoteElector() (*grpc.ClientConn, error) {
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 30 * time.Second}))
 
 	if err != nil {
-		logrus.Warnf("[%s] connect remote elector failed, reason: %v", e.Role().String(), err)
+		logrus.Warnf("[%s]     connect remote elector failed, reason: %v", e.Role().String(), err)
 		return nil, err
 	}
 
-	logrus.Infof("[%s] connect success", e.Role().String())
+	logrus.Infof("[%s]     connect success", e.Role().String())
 	return conn, nil
 }
 
@@ -344,6 +411,20 @@ func (e *msElector) leaderLoop() {
 		select {
 		case <-e.stopCh:
 			return
+
+		case userReq := <-e.userRequestCh:
+			if abdicateReq := userReq.event.(userRequest); abdicateReq == userRequestAbdicate {
+
+				logrus.Infof("[%s] abdicate myself from [Leader] to [Follower]", e.Role().String())
+
+				e.changeRole(RoleLeader, RoleFollower, e.epoch)
+
+				go e.followerLoop()
+				e.setStateConnected()
+
+				return
+			}
+
 		case <-e.connectedCh:
 
 			ticker := time.NewTicker(time.Duration(e.options.pingPeriod) * time.Second)
@@ -351,7 +432,6 @@ func (e *msElector) leaderLoop() {
 
 			for {
 
-				// NOTE: 在连接断开状态下，是否还需要处理 event
 				if !e.connected() {
 					break
 				}
@@ -364,21 +444,7 @@ func (e *msElector) leaderLoop() {
 				case eev := <-e.evCh:
 					ev := eev.event
 
-					//logrus.Debugf("[%s] get event: %#v", e.Role().String(), ev)
-
 					switch ev.(type) {
-					case userRequest:
-						// FIXME: not good enough
-						if req := ev.(userRequest); req == userRequestAbdicate {
-
-							e.changeRole(RoleLeader, RoleFollower, e.epoch)
-
-							go e.followerLoop()
-							e.setStateConnected()
-
-							return
-						}
-
 					case *pb.MsgPING:
 						remoteEv := ev.(*pb.MsgPING)
 
@@ -471,6 +537,20 @@ func (e *msElector) followerLoop() {
 		select {
 		case <-e.stopCh:
 			return
+
+		case userReq := <-e.userRequestCh:
+			if promoteReq := userReq.event.(userRequest); promoteReq == userRequestPromote {
+				logrus.Infof("[%s] <-- recv [Promote] by user request, promote myself to Leader",
+					e.Role().String())
+
+				e.changeRole(e.role, RoleLeader, e.nextEpoch())
+
+				go e.leaderLoop()
+				e.setStateConnected()
+
+				return
+			}
+
 		case <-e.connectedCh:
 
 			ticker := time.NewTimer(time.Duration(e.options.leaderTimeout) * time.Second)
@@ -478,7 +558,6 @@ func (e *msElector) followerLoop() {
 
 			for {
 
-				// NOTE: 在连接断开状态下，是否还需要处理 event
 				if !e.connected() {
 					break
 				}
@@ -498,23 +577,7 @@ func (e *msElector) followerLoop() {
 				case eev := <-e.evCh:
 					ev := eev.event
 
-					//logrus.Debugf("[%s] get event: %#v", e.Info().String(), ev)
-
 					switch ev.(type) {
-					case userRequest:
-						// FIXME
-						if req := ev.(userRequest); req == userRequestPromote {
-							logrus.Infof("[%s] <-- recv [Promote] by user request, promote myself to Leader",
-								e.Role().String())
-
-							e.changeRole(e.role, RoleLeader, e.nextEpoch())
-
-							go e.leaderLoop()
-							e.setStateConnected()
-
-							return
-						}
-
 					case *pb.MsgPING:
 						remoteEv := ev.(*pb.MsgPING)
 
@@ -549,7 +612,7 @@ func (e *msElector) followerLoop() {
 						// NOTE: follower has no right to vote, should never receive [Vote]
 
 					case *pb.MsgAbdicate:
-						logrus.Infof("[%s] <-- recv [Abdicate] from Leader, promote myself to Leader", e.Role().String())
+						logrus.Infof("[%s] <-- recv [Abdicate] from former Leader, send [Promoted] back", e.Role().String())
 
 						e.changeRole(RoleFollower, RoleLeader, e.nextEpoch())
 
@@ -646,7 +709,6 @@ func (e *msElector) indefiniteBackgroundConnection() error {
 		if err := e.connect(); err == nil {
 			e.setStateConnected()
 		} else {
-			logrus.Warnf("[%s] connect failed, reason: %v", e.Role().String(), err)
 			e.setStateDisconnected(err)
 		}
 
@@ -658,6 +720,7 @@ func (e *msElector) indefiniteBackgroundConnection() error {
 		select {
 		case <-e.stopCh:
 			return errors.New("stopped")
+
 		case <-time.After(retry + jitter):
 		}
 	}
@@ -669,13 +732,14 @@ func (e *msElector) changeRole(from, to Role, epoch uint64) {
 		return
 	}
 
+	logrus.Infof("[%s] change role from [%s] to [%s] at epoch [%d]",
+		e.Role().String(), from.String(), to.String(), epoch)
+
 	e.role = to
 	e.epoch = epoch
 	e.count = 0
 
 	saveState(e.stFile, e.role, e.epoch)
-	logrus.Infof("[%s] change role from [%s] to [%s] at epoch [%d]",
-		e.Role().String(), from.String(), to.String(), epoch)
 }
 
 func (e *msElector) nextEpoch() uint64 {
@@ -718,61 +782,6 @@ func (e *msElector) ping() {
 	e.evCh <- &eEvent{rsp, nil, nil}
 }
 
-// Abdicate the leadership to the other elector
-// NOTE: fd, 20180522
-// the strategy for abdication in elector version alpha.3 updates to:
-// 1. set the abdicating bit;
-// 2. put an abdicate-user-request-event into elector machine loop to turn to follower **IMMEDIATELY**;
-// 3. send an abdicate-message to the other side to make him turn to a leader;
-// 4. wait for the reply, which should be a promoted-message, put it to elector machine loop to clear the
-// 	  abdicating bit.
-func (e *msElector) abdicate() {
-	if e.role != RoleLeader {
-		logrus.Warnf("[%s] abdicate failed, reason: only Leader can abdicate", e.Role().String())
-		return
-	}
-
-	// NOTE: fd, 20180629
-	// we should make local elector abdicated even if connection with other side is lost
-
-	abdicate := pb.MsgAbdicate{
-		Id:    e.id,
-		Role:  pb.EnumRole(e.role),
-		Epoch: e.epoch,
-	}
-
-	// NOTE: make local Leader abdicate
-	e.evCh <- &eEvent{userRequestAbdicate, nil, nil}
-	logrus.Infof("[%s] make Leader to abdicate locally", e.Role().String())
-
-	// FIXME
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
-
-	rsp, err := e.electorClient.Abdicate(ctx, &abdicate)
-	if err != nil {
-		logrus.Warnf("[%s] --> send [Abdicate] failed, reason: %v", e.Role().String(), err)
-		e.setStateDisconnected(err)
-		return
-	}
-
-	logrus.Debugf("[%s] --> send [Abdicate] => [%s]", e.Role().String(), abdicate.String())
-
-	e.evCh <- &eEvent{rsp, nil, nil}
-}
-
-// Promote myself to Leader
-func (e *msElector) promote() {
-	if e.role == RoleLeader {
-		logrus.Warnf("[%s] promote failed, reason: Leader need not to promote", e.Role().String())
-		return
-	}
-
-	e.evCh <- &eEvent{userRequestPromote, nil, nil}
-
-	logrus.Infof("[%s] make [%s] to promote locally", e.Role().String(), e.Role().String())
-}
-
 // gRPC server callback
 
 type electorService struct {
@@ -809,6 +818,8 @@ func (es *electorService) PING(ctx context.Context, ping *pb.MsgPING) (*pb.MsgPO
 func (es *electorService) SeekVote(ctx context.Context, seek *pb.MsgSeekVote) (*pb.MsgVote, error) {
 	var eev eEvent
 
+	logrus.Debugf("[%s] <-- recv [SeekVote] => [%s]", es.e.Role().String(), seek.String())
+
 	if err := es.sanityCheck(ctx); err != nil {
 		return nil, err
 	}
@@ -824,11 +835,15 @@ func (es *electorService) SeekVote(ctx context.Context, seek *pb.MsgSeekVote) (*
 	}
 
 	reply := eev.reply.(pb.MsgVote)
+
+	logrus.Debugf("[%s] --> send [Vote] => [%s]", es.e.Role().String(), reply.String())
 	return &reply, nil
 }
 
 func (es *electorService) Abdicate(ctx context.Context, abdicate *pb.MsgAbdicate) (*pb.MsgPromoted, error) {
 	var eev eEvent
+
+	logrus.Debugf("[%s] <-- recv [Abdicate] => [%s]", es.e.Role().String(), abdicate.String())
 
 	if err := es.sanityCheck(ctx); err != nil {
 		return nil, err
@@ -845,6 +860,8 @@ func (es *electorService) Abdicate(ctx context.Context, abdicate *pb.MsgAbdicate
 	}
 
 	reply := eev.reply.(pb.MsgPromoted)
+
+	logrus.Debugf("[%s] --> send [Promoted] => [%s]", es.e.Role().String(), reply.String())
 	return &reply, nil
 }
 

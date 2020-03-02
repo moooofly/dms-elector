@@ -160,6 +160,8 @@ func (rs *requestServer) start() error {
 		if err != nil {
 			return err
 		}
+
+		logrus.Infof("[master-slave] launch request server at [%s]", rs.tcpHost)
 		rs.lnrs = append(rs.lnrs, tcpLsnr)
 	}
 	if rs.unixHost != "" {
