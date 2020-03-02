@@ -21,10 +21,11 @@ type roleService struct {
 func (s *roleService) Obtain(ctx context.Context, r *pb.ObtainReq) (*pb.ObtainRsp, error) {
 	cip, err := getClietAddr(ctx)
 	if err != nil {
-		logrus.Infof("[grpc-role-service] err: %v", err)
+		logrus.Infof("[%s][role-service] err: %v", s.e.Info().role.String(), err)
 	}
 
-	logrus.Infof("[grpc-role-service] <-- recv [Obtain] from [%s]", cip)
+	logrus.Debugf("[%s][role-service] <-- recv [Obtain] from [%s], send Resp back",
+		s.e.Info().role.String(), cip)
 
 	return &pb.ObtainRsp{
 		Code: pb.EnumCode_Success,
@@ -34,17 +35,39 @@ func (s *roleService) Obtain(ctx context.Context, r *pb.ObtainReq) (*pb.ObtainRs
 }
 
 func (s *roleService) Abdicate(ctx context.Context, r *pb.AbdicateReq) (*pb.AbdicateRsp, error) {
-	logrus.Infof("[grpc-role-service] <-- recv [Abdicate] from [%s]")
+	cip, err := getClietAddr(ctx)
+	if err != nil {
+		logrus.Infof("[%s][role-service] err: %v", s.e.Info().role.String(), err)
+	}
 
+	logrus.Infof("[%s][role-service] <-- recv [Abdicate] from [%s]",
+		s.e.Info().role.String(), cip)
+
+	if s.e.Info().role != RoleLeader {
+		logrus.Warnf("[%s] abdicate failed, reason: only Leader can abdicate",
+			s.e.Info().role.String())
+	} else {
+		s.e.Abdicate()
+	}
+
+	logrus.Infof("[%s][role-service] --> send [Abdicate] Resp back",
+		s.e.Info().role.String())
+
+	// FIXME: 是否应该基于 role 来判定是否执行 abdicate 和应答内容
 	return &pb.AbdicateRsp{
-		Code: pb.EnumCode_Failure,
-		//Msg:  pb.EnumCode_name[int32(pb.EnumCode_Success)],
-		Msg: "this is abdicate response from grpc server, reject",
+		Code: pb.EnumCode_Success,
+		Msg:  pb.EnumCode_name[int32(pb.EnumCode_Success)],
 	}, nil
 }
 
 func (s *roleService) Promote(ctx context.Context, r *pb.PromoteReq) (*pb.PromoteRsp, error) {
-	logrus.Infof("[grpc-role-service] <-- recv [Promote] from [%s]")
+	cip, err := getClietAddr(ctx)
+	if err != nil {
+		logrus.Infof("[%s][role-service] err: %v", s.e.Info().role.String(), err)
+	}
+
+	logrus.Infof("[%s][role-service] <-- recv [Promote] from [%s]",
+		s.e.Info().role.String(), cip)
 
 	return &pb.PromoteRsp{
 		Code: pb.EnumCode_Success,
@@ -71,6 +94,8 @@ func (s *roleService) Start() error {
 	if err != nil {
 		return err
 	}
+
+	logrus.Infof("[master-slave] launch role service at [%s]", s.tcpHost)
 
 	return server.Serve(lis)
 }
