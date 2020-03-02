@@ -1,3 +1,11 @@
+## 0.2.0 (2020-03-02)
+
+* feat: (need to read through codes to tell the details after some days) ([c05a512](https://github.com/moooofly/dms-elector/commit/c05a512))
+* feat: support log-file and conf-path configuration ([1def17a](https://github.com/moooofly/dms-elector/commit/1def17a))
+* chore: update conf/elector.ini and .gitignore ([3c673d7](https://github.com/moooofly/dms-elector/commit/3c673d7))
+
+
+
 # 0.1.0 (2019-09-11)
 
 
