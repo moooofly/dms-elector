@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"fmt"
+
 	"github.com/sirupsen/logrus"
 	"gopkg.in/ini.v1"
 )
@@ -19,7 +21,7 @@ type global struct {
 	TcpHost   string `ini:"local-tcp-request-server-host"`
 	UnixHost  string `ini:"local-unix-request-server-path"`
 	StateFile string `ini:"persistence-file-path"`
-	LogPath   string `ini:"log-file-path"`
+	LogFile   string `ini:"log-file"`
 	LogLevel  string `ini:"log-level"`
 	Mode      string `ini:"mode"`
 }
@@ -44,12 +46,13 @@ type cluster struct {
 	ProtectionPeriod int    `ini:"protection-period"`
 }
 
-func Load() {
-	// TODO: 路径问题
+func Load(confPath string) {
+	cf := fmt.Sprintf("%s/elector.ini", confPath)
+
 	var err error
-	cfg, err = ini.Load("conf/elector.ini")
+	cfg, err = ini.Load(cf)
 	if err != nil {
-		logrus.Fatalf("Fail to parse 'conf/elector.ini': %v", err)
+		logrus.Fatalf("Fail to parse '%s': %v", cf, err)
 	}
 
 	mapTo("global", GlobalSetting)
