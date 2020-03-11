@@ -65,8 +65,9 @@ func Load(confPath string) {
 	case "cluster":
 		mapTo("cluster", ClusterSetting)
 	default:
-		logrus.Fatal("not match any of [single-point|master-slave|cluster].")
+		logrus.Fatal("mode '%v' dose not match any of [single-point|master-slave|cluster].", GlobalSetting.Mode)
 	}
+	logrus.Infof("mode setting => [%s]", GlobalSetting.Mode)
 }
 
 func mapTo(section string, v interface{}) {
