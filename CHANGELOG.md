@@ -1,3 +1,11 @@
+## 0.3.0 (2020-04-16)
+
+* refactor: after removing request server related codes, cluster.go need to be updated ([f85ab83](https://github.com/moooofly/dms-elector/commit/f85ab83))
+* refactor: optimize log output ([b0d1d8a](https://github.com/moooofly/dms-elector/commit/b0d1d8a))
+* feat: remove old request server related codes ([c3f5957](https://github.com/moooofly/dms-elector/commit/c3f5957))
+
+
+
 ## 0.2.0 (2020-03-02)
 
 * feat: (need to read through codes to tell the details after some days) ([c05a512](https://github.com/moooofly/dms-elector/commit/c05a512))
