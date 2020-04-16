@@ -68,20 +68,20 @@ type msElector struct {
 // NewmsElector is the constructor of msElector
 func NewMasterSlave(
 	stfile string,
-	rsTcpHost, rsUnixHost string,
+	rsTcpHost, rsUnixPath string,
 	local, remote string,
 	opts ...electorOption,
 ) *msElector {
 
 	role, epoch := loadState(stfile)
-	return newMasterSlaveWithInfo(stfile, role, epoch, rsTcpHost, rsUnixHost, local, remote, opts...)
+	return newMasterSlaveWithInfo(stfile, role, epoch, rsTcpHost, rsUnixPath, local, remote, opts...)
 }
 
 func newMasterSlaveWithInfo(
 	stfile string,
 	role Role,
 	epoch uint64,
-	rsTcpHost, rsUnixHost string,
+	rsTcpHost, rsUnixPath string,
 	local, remote string,
 	opts ...electorOption,
 ) *msElector {
@@ -95,7 +95,7 @@ func newMasterSlaveWithInfo(
 	ms.local = local
 	ms.remote = remote
 
-	ms.rs = newRoleService(rsTcpHost, rsUnixHost, ms)
+	ms.rs = newRoleService(rsTcpHost, rsUnixPath, ms)
 	ms.count = 0
 
 	// TODO: set default values in an appropriate way
@@ -367,8 +367,8 @@ Leader mainloop:
 */
 func (e *msElector) leaderLoop() {
 
-	logrus.Debug(">>>>> entering leaderLoop")
-	defer logrus.Debug("<<<<< leaving leaderLoop")
+	logrus.Debug("----------->  in [[  leader  ]] loop")
+	defer logrus.Debug("<----------- out [[  leader  ]] loop")
 
 	for {
 
@@ -496,8 +496,8 @@ func (e *msElector) leaderLoop() {
 // 		5) Abdicate: promote and reply a promoted message, if I am not already in abdicating state;
 //		6) Promoted: clear the abdicating flag if any.
 func (e *msElector) followerLoop() {
-	logrus.Debug(">>>>> entering followerLoop")
-	defer logrus.Debug("<<<<< leaving followerLoop")
+	logrus.Debug("----------->  in [[ follower ]] loop")
+	defer logrus.Debug("<----------- out [[ follower ]] loop")
 
 	for {
 

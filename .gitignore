@@ -2,3 +2,4 @@ elector
 
 *.prof
 proto/*.pb.go
+*.swp
