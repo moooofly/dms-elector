@@ -38,8 +38,8 @@ type ClusterElector struct {
 	zkConn        *zk.Conn     // conn
 	zkConnHandler *connHandler // connection handler of zookeeper
 
-	reqSrv *requestServer // user request server
-	reqCh  chan request   // user request channel
+	rs    *roleService
+	reqCh chan request // user request channel
 
 	options electorOptions
 
@@ -59,12 +59,12 @@ func doCloseRemoteZkWrapper(args ...interface{}) error {
 }
 
 // NewClusterElector is the constructor of ClusterElector
-func NewClusterElector(path, reqSrvHost, reqSrvPath string, zkHost []string, zkLeaderDir string, opts ...electorOption) *ClusterElector {
+func NewClusterElector(path, rsTcpHost, rsUnixPath string, zkHost []string, zkLeaderDir string, opts ...electorOption) *ClusterElector {
 	role, _ := loadState(path)
-	return newClusterElectorWithInfo(path, role, reqSrvHost, reqSrvPath, zkHost, zkLeaderDir, opts...)
+	return newClusterElectorWithInfo(path, role, rsTcpHost, rsUnixPath, zkHost, zkLeaderDir, opts...)
 }
 
-func newClusterElectorWithInfo(path string, role Role, reqSrvHost, reqSrvPath string, zkHost []string, zkLeaderDir string, opts ...electorOption) *ClusterElector {
+func newClusterElectorWithInfo(path string, role Role, rsTcpHost, rsUnixPath string, zkHost []string, zkLeaderDir string, opts ...electorOption) *ClusterElector {
 	var e ClusterElector
 
 	e.id = rand.Uint64()
@@ -75,7 +75,7 @@ func newClusterElectorWithInfo(path string, role Role, reqSrvHost, reqSrvPath st
 	e.zkLeaderPath = zkLeaderDir + "/" + zkLeaderNodeName
 	e.zkAbdicatePath = zkLeaderDir + "/" + zkAbdicateFlagName
 	e.zkHost = zkHost
-	e.reqSrv = newRequestServer(reqSrvHost, reqSrvPath, &e)
+	e.rs = newRoleService(rsTcpHost, rsUnixPath, &e)
 	e.path = path
 
 	// defaults
@@ -110,8 +110,8 @@ func (e *ClusterElector) Start() error {
 	e.connectZkTillSucceed(true)
 
 	// start local user request server if need to
-	if e.reqSrv.tcpHost != "" || e.reqSrv.unixHost != "" {
-		if err := e.reqSrv.start(); err != nil {
+	if e.rs.tcpHost != "" || e.rs.unixHost != "" {
+		if err := e.rs.Start(); err != nil {
 			logrus.Warnf("[%s] Cannot start local request server: %v", e.Info().String(), err)
 			return err
 		}
@@ -140,8 +140,8 @@ func (e *ClusterElector) Stop() error {
 	e.state = stateStopped
 	close(e.stopCh)
 	e.zkConnHandler.close(e)
-	if e.reqSrv != nil {
-		e.reqSrv.stop()
+	if e.rs != nil {
+		e.rs.Stop()
 	}
 
 	return nil

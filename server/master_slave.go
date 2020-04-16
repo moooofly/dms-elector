@@ -39,17 +39,11 @@ type msElector struct {
 	local  string // local elector listening address
 	remote string // remote elector listening address
 
-	rs *roleService
-	//reqSrv *requestServer // only for backward compatibility
-
+	rs      *roleService
 	options electorOptions
 
 	count uint64 // ping counter as a leader
-
-	// -------------------
-
-	// mu protects the non-atomic and non-channel variables
-	mu sync.RWMutex
+	mu    sync.RWMutex
 
 	started bool
 	stopped bool
@@ -74,20 +68,20 @@ type msElector struct {
 // NewmsElector is the constructor of msElector
 func NewMasterSlave(
 	stfile string,
-	rsTcpHost, rsUnixHost string,
+	rsTcpHost, rsUnixPath string,
 	local, remote string,
 	opts ...electorOption,
 ) *msElector {
 
 	role, epoch := loadState(stfile)
-	return newMasterSlaveWithInfo(stfile, role, epoch, rsTcpHost, rsUnixHost, local, remote, opts...)
+	return newMasterSlaveWithInfo(stfile, role, epoch, rsTcpHost, rsUnixPath, local, remote, opts...)
 }
 
 func newMasterSlaveWithInfo(
 	stfile string,
 	role Role,
 	epoch uint64,
-	rsTcpHost, rsUnixHost string,
+	rsTcpHost, rsUnixPath string,
 	local, remote string,
 	opts ...electorOption,
 ) *msElector {
@@ -101,20 +95,7 @@ func newMasterSlaveWithInfo(
 	ms.local = local
 	ms.remote = remote
 
-	// FIXME
-	ms.rs = newRoleService(rsTcpHost, rsUnixHost, ms)
-
-	// NOTE: only for backward compatibility
-	/*
-		sli := strings.Split(rsTcpHost, ":")
-		port, _ := strconv.Atoi(sli[1])
-		oldTcpHost := fmt.Sprintf("%s:%d", sli[0], port+1)
-
-		ms.reqSrv = newRequestServer(oldTcpHost, rsUnixHost, ms)
-	*/
-
-	// ----
-
+	ms.rs = newRoleService(rsTcpHost, rsUnixPath, ms)
 	ms.count = 0
 
 	// TODO: set default values in an appropriate way
@@ -133,8 +114,6 @@ func newMasterSlaveWithInfo(
 func (e *msElector) Role() Role {
 	return e.role
 }
-
-// elector interface implementation
 
 // Info gets metadata of the elector
 func (e *msElector) Info() ElectorInfo {
@@ -162,7 +141,7 @@ func (e *msElector) Abdicate() {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
 
-	// 告诉 remote elector 自己要退位了
+	// tell remote elector about abdicating action
 	abdicateRsp, err := e.electorClient.Abdicate(ctx, &abdicate)
 	if err != nil {
 		logrus.Warnf("[%s] --> send [Abdicate] to remote elector failed, reason: %v", e.Role().String(), err)
@@ -226,12 +205,6 @@ func (e *msElector) Stop() error {
 		e.rs.Stop()
 	}
 
-	/*
-		if e.reqSrv != nil {
-			e.reqSrv.stop()
-		}
-	*/
-
 	saveState(e.stFile, e.role, e.epoch)
 
 	return err
@@ -275,16 +248,7 @@ func (e *msElector) Start() (err error) {
 		}
 
 		go e.indefiniteBackgroundConnection()
-
 		go e.mainLoop()
-
-		// step pre-2: 启动 request server
-		/*
-			if err = e.reqSrv.start(); err != nil {
-				// FIXME: 直接使用 Fatalf ?
-				logrus.Warnf("[master-slave] start request server failed, reason: %v", err)
-			}
-		*/
 
 		// step 2: 启动 role service
 		if err = e.rs.Start(); err != nil {
@@ -403,8 +367,8 @@ Leader mainloop:
 */
 func (e *msElector) leaderLoop() {
 
-	logrus.Debug(">>>>> entering leaderLoop")
-	defer logrus.Debug("<<<<< leaving leaderLoop")
+	logrus.Debug("----------->  in [[  leader  ]] loop")
+	defer logrus.Debug("<----------- out [[  leader  ]] loop")
 
 	for {
 
@@ -499,6 +463,9 @@ func (e *msElector) leaderLoop() {
 						// nothing to do
 
 					case *pb.MsgAbdicate:
+						// NOTE: 回应 remote 的消息，但由于 local elector 已经是 leader ，因此无需 promote
+						logrus.Infof("[%s] <-- recv [Abdicate] from remote elector (claimed Leader), send [Promoted: false] back", e.Role().String())
+
 						eev.reply = pb.MsgPromoted{Id: e.id, Role: pb.EnumRole(e.role), Epoch: e.epoch, Promoted: false}
 						eev.errCh <- nil
 
@@ -529,8 +496,8 @@ func (e *msElector) leaderLoop() {
 // 		5) Abdicate: promote and reply a promoted message, if I am not already in abdicating state;
 //		6) Promoted: clear the abdicating flag if any.
 func (e *msElector) followerLoop() {
-	logrus.Debug(">>>>> entering followerLoop")
-	defer logrus.Debug("<<<<< leaving followerLoop")
+	logrus.Debug("----------->  in [[ follower ]] loop")
+	defer logrus.Debug("<----------- out [[ follower ]] loop")
 
 	for {
 
@@ -612,7 +579,7 @@ func (e *msElector) followerLoop() {
 						// NOTE: follower has no right to vote, should never receive [Vote]
 
 					case *pb.MsgAbdicate:
-						logrus.Infof("[%s] <-- recv [Abdicate] from former Leader, send [Promoted] back", e.Role().String())
+						logrus.Infof("[%s] <-- recv [Abdicate] from remote elector (Leader), send [Promoted: true] back", e.Role().String())
 
 						e.changeRole(RoleFollower, RoleLeader, e.nextEpoch())
 

@@ -85,7 +85,7 @@ func (s *roleService) Start() error {
 	pb.RegisterRoleServiceServer(server, s)
 
 	if s.tcpHost == "" && s.unixHost == "" {
-		logrus.Warnf("[single-point] neither tcpHost nor unixHost is set")
+		logrus.Warnf("[role-service] neither tcpHost nor unixHost is set")
 		return errors.New("host not set")
 	}
 
@@ -95,7 +95,7 @@ func (s *roleService) Start() error {
 		return err
 	}
 
-	logrus.Infof("[master-slave] launch role service at [%s]", s.tcpHost)
+	logrus.Infof("[role-service] launch role service at [%s]", s.tcpHost)
 
 	return server.Serve(lis)
 }
