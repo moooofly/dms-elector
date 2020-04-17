@@ -46,17 +46,16 @@ type dialOptions struct {
 	chainUnaryInts  []UnaryClientInterceptor
 	chainStreamInts []StreamClientInterceptor
 
-	cp              Compressor
-	dc              Decompressor
-	bs              internalbackoff.Strategy
-	block           bool
-	returnLastError bool
-	insecure        bool
-	timeout         time.Duration
-	scChan          <-chan ServiceConfig
-	authority       string
-	copts           transport.ConnectOptions
-	callOptions     []CallOption
+	cp          Compressor
+	dc          Decompressor
+	bs          internalbackoff.Strategy
+	block       bool
+	insecure    bool
+	timeout     time.Duration
+	scChan      <-chan ServiceConfig
+	authority   string
+	copts       transport.ConnectOptions
+	callOptions []CallOption
 	// This is used by v1 balancer dial option WithBalancer to support v1
 	// balancer, and also by WithBalancerName dial option.
 	balancerBuilder             balancer.Builder
@@ -73,7 +72,6 @@ type dialOptions struct {
 	// we need to be able to configure this in tests.
 	resolveNowBackoff func(int) time.Duration
 	resolvers         []resolver.Builder
-	withProxy         bool
 }
 
 // DialOption configures how we set up the connection.
@@ -300,35 +298,12 @@ func WithBlock() DialOption {
 	})
 }
 
-// WithReturnConnectionError returns a DialOption which makes the client connection
-// return a string containing both the last connection error that occurred and
-// the context.DeadlineExceeded error.
-// Implies WithBlock()
-//
-// This API is EXPERIMENTAL.
-func WithReturnConnectionError() DialOption {
-	return newFuncDialOption(func(o *dialOptions) {
-		o.block = true
-		o.returnLastError = true
-	})
-}
-
 // WithInsecure returns a DialOption which disables transport security for this
 // ClientConn. Note that transport security is required unless WithInsecure is
 // set.
 func WithInsecure() DialOption {
 	return newFuncDialOption(func(o *dialOptions) {
 		o.insecure = true
-	})
-}
-
-// WithNoProxy returns a DialOption which disables the use of proxies for this
-// ClientConn. This is ignored if WithDialer or WithContextDialer are used.
-//
-// This API is EXPERIMENTAL.
-func WithNoProxy() DialOption {
-	return newFuncDialOption(func(o *dialOptions) {
-		o.withProxy = false
 	})
 }
 
@@ -582,7 +557,6 @@ func defaultDialOptions() dialOptions {
 			ReadBufferSize:  defaultReadBufSize,
 		},
 		resolveNowBackoff: internalbackoff.DefaultExponential.Backoff,
-		withProxy:         true,
 	}
 }
 

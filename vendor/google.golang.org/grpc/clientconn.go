@@ -194,13 +194,12 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	cc.mkp = cc.dopts.copts.KeepaliveParams
 
 	if cc.dopts.copts.Dialer == nil {
-		cc.dopts.copts.Dialer = func(ctx context.Context, addr string) (net.Conn, error) {
-			network, addr := parseDialTarget(addr)
-			return (&net.Dialer{}).DialContext(ctx, network, addr)
-		}
-		if cc.dopts.withProxy {
-			cc.dopts.copts.Dialer = newProxyDialer(cc.dopts.copts.Dialer)
-		}
+		cc.dopts.copts.Dialer = newProxyDialer(
+			func(ctx context.Context, addr string) (net.Conn, error) {
+				network, addr := parseDialTarget(addr)
+				return (&net.Dialer{}).DialContext(ctx, network, addr)
+			},
+		)
 	}
 
 	if cc.dopts.copts.UserAgent != "" {
@@ -217,14 +216,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	defer func() {
 		select {
 		case <-ctx.Done():
-			switch {
-			case ctx.Err() == err:
-				conn = nil
-			case err == nil || !cc.dopts.returnLastError:
-				conn, err = nil, ctx.Err()
-			default:
-				conn, err = nil, fmt.Errorf("%v: %v", ctx.Err(), err)
-			}
+			conn, err = nil, ctx.Err()
 		default:
 		}
 	}()
@@ -329,9 +321,6 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 			}
 			if !cc.WaitForStateChange(ctx, s) {
 				// ctx got timeout or canceled.
-				if err = cc.blockingpicker.connectionError(); err != nil && cc.dopts.returnLastError {
-					return nil, err
-				}
 				return nil, ctx.Err()
 			}
 		}
@@ -1224,9 +1213,16 @@ func (ac *addrConn) createTransport(addr resolver.Address, copts transport.Conne
 	onCloseCalled := make(chan struct{})
 	reconnect := grpcsync.NewEvent()
 
+	authority := ac.cc.authority
 	// addr.ServerName takes precedent over ClientConn authority, if present.
-	if addr.ServerName == "" {
-		addr.ServerName = ac.cc.authority
+	if addr.ServerName != "" {
+		authority = addr.ServerName
+	}
+
+	target := transport.TargetInfo{
+		Addr:      addr.Addr,
+		Metadata:  addr.Metadata,
+		Authority: authority,
 	}
 
 	once := sync.Once{}
@@ -1272,7 +1268,7 @@ func (ac *addrConn) createTransport(addr resolver.Address, copts transport.Conne
 		copts.ChannelzParentID = ac.channelzID
 	}
 
-	newTr, err := transport.NewClientTransport(connectCtx, ac.cc.ctx, addr, copts, onPrefaceReceipt, onGoAway, onClose)
+	newTr, err := transport.NewClientTransport(connectCtx, ac.cc.ctx, target, copts, onPrefaceReceipt, onGoAway, onClose)
 	if err != nil {
 		// newTr is either nil, or closed.
 		channelz.Warningf(ac.channelzID, "grpc: addrConn.createTransport failed to connect to %v. Err: %v. Reconnecting...", addr, err)
@@ -1529,9 +1525,9 @@ var ErrClientConnTimeout = errors.New("grpc: timed out when dialing")
 
 func (cc *ClientConn) getResolver(scheme string) resolver.Builder {
 	for _, rb := range cc.dopts.resolvers {
-		if scheme == rb.Scheme() {
+		if cc.parsedTarget.Scheme == rb.Scheme() {
 			return rb
 		}
 	}
-	return resolver.Get(scheme)
+	return resolver.Get(cc.parsedTarget.Scheme)
 }
