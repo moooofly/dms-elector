@@ -1,0 +1,23 @@
+package: github.com/moooofly/dms-elector
+import:
+- package: github.com/samuel/go-zookeeper
+  subpackages:
+  - zk
+- package: github.com/sirupsen/logrus
+- package: golang.org/x/net
+  subpackages:
+  - context
+- package: google.golang.org/grpc
+  subpackages:
+  - codes
+  - keepalive
+  - peer
+  - status
+- package: gopkg.in/alecthomas/kingpin.v2
+  version: ^2.2.6
+- package: gopkg.in/ini.v1
+  version: ^1.55.0
+testImport:
+- package: github.com/stretchr/testify
+  subpackages:
+  - assert
