@@ -21,7 +21,7 @@ LDFLAGS += -X "github.com/moooofly/dms-elector/pkg/version.GitBranch=$(shell git
 LDFLAGS += -X "github.com/moooofly/dms-elector/pkg/version.GitTag=$(shell git describe --tags)"
 LDFLAGS += -X "github.com/moooofly/dms-elector/pkg/version.GitHash=$(shell git rev-parse HEAD)"
 
-BINARY := elector
+BINARY := dms-elector
 
 .PHONY: all build install lint test pack docker misspell shellcheck clean
 
@@ -56,19 +56,25 @@ deps:
 	go mod tidy && go mod vendor
 	@echo ""
 
-build_linux:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(BUILD_FLAG) -o $(BINARY)_linux_amd64 -ldflags '$(LDFLAGS)' .
+build_x86:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(BUILD_FLAG) -o $(BINARY) -ldflags '$(LDFLAGS)' .
+
+build_arm64:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(BUILD_FLAG) -o $(BINARY) -ldflags '$(LDFLAGS)' .
 
 build_darwin:
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build $(BUILD_FLAG) -o $(BINARY)_darwin_amd64 -ldflags '$(LDFLAGS)' .
 
-pack: build_linux build_darwin
+pack: build_x86 build_arm64 build_darwin
 	@echo "==> Packing ..."
 	@tar czvf $(BINARY)-$(shell cat VERSION).linux-amd64.tar.gz $(BINARY)_linux_amd64 conf/*.conf
+	@echo ""
+	@tar czvf $(BINARY)-$(shell cat VERSION).linux-arm64.tar.gz $(BINARY)_linux_arm64 conf/*.conf
 	@echo ""
 	@tar czvf $(BINARY)-$(shell cat VERSION).darwin-amd64.tar.gz $(BINARY)_darwin_amd64 conf/*.conf
 	@echo ""
 	@rm $(BINARY)_linux_amd64
+	@rm $(BINARY)_linux_arm64
 	@rm $(BINARY)_darwin_amd64
 
 misspell:
@@ -84,5 +90,6 @@ clean:
 	rm -f $(BINARY) $(BINARY)_*
 	rm -rf *.out
 	rm -rf *.tar.gz
+	rm -f *.prof
 	@echo ""
 
