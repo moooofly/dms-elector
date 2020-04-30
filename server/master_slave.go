@@ -248,11 +248,11 @@ func (e *msElector) Start() (err error) {
 		// step 1: 启动 elector server
 		if err = e.launchElector(); err != nil {
 			// FIXME: 直接使用 Fatalf ?
-			logrus.Warnf("[master-slave] launch elector as [role:%s epoch:%d] at [%s:%s] failed, reason: %v",
-				e.Info(), e.epoch, e.localEleIp, e.localElePort, err)
+			logrus.Warnf("[master-slave] launch elector as [%s] at [%s:%s] failed, reason: %v",
+				e.Info(), e.localEleIp, e.localElePort, err)
 		}
-		logrus.Infof("[master-slave] launch elector as [role:%s epoch:%d] at [%s:%s] success",
-			e.Info(), e.epoch, e.localEleIp, e.localElePort)
+		logrus.Infof("[master-slave] launch elector as [%s] at [%s:%s] success",
+			e.Info(), e.localEleIp, e.localElePort)
 
 		// step 3: 和 remote elector 建立连接
 		// An optimistic first connection attempt to ensure that applications

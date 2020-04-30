@@ -3,9 +3,8 @@ github.com/alecthomas/template
 github.com/alecthomas/template/parse
 # github.com/alecthomas/units v0.0.0-20190924025748-f65c72e2690d
 github.com/alecthomas/units
-# github.com/golang/protobuf v1.4.0-rc.4.0.20200313231945-b860323f09d0
+# github.com/golang/protobuf v1.4.0
 github.com/golang/protobuf/proto
-github.com/golang/protobuf/internal/wire
 github.com/golang/protobuf/ptypes
 github.com/golang/protobuf/ptypes/any
 github.com/golang/protobuf/ptypes/duration
@@ -16,7 +15,7 @@ github.com/konsorten/go-windows-terminal-sequences
 github.com/samuel/go-zookeeper/zk
 # github.com/sirupsen/logrus v1.5.0
 github.com/sirupsen/logrus
-# golang.org/x/net v0.0.0-20200324143707-d3edc9973b7e
+# golang.org/x/net v0.0.0-20200425230154-ff2c4b7c35a0
 golang.org/x/net/context
 golang.org/x/net/trace
 golang.org/x/net/internal/timeseries
@@ -33,7 +32,7 @@ golang.org/x/text/unicode/norm
 golang.org/x/text/transform
 # google.golang.org/genproto v0.0.0-20190819201941-24fa4b261c55
 google.golang.org/genproto/googleapis/rpc/status
-# google.golang.org/grpc v1.28.1
+# google.golang.org/grpc v1.29.1
 google.golang.org/grpc
 google.golang.org/grpc/codes
 google.golang.org/grpc/status
@@ -67,6 +66,7 @@ google.golang.org/grpc/resolver
 google.golang.org/grpc/serviceconfig
 google.golang.org/grpc/stats
 google.golang.org/grpc/tap
+google.golang.org/grpc/internal/status
 google.golang.org/grpc/credentials/internal
 google.golang.org/grpc/internal/grpclog
 google.golang.org/grpc/binarylog/grpc_binarylog_v1
@@ -76,10 +76,10 @@ google.golang.org/grpc/attributes
 google.golang.org/protobuf/reflect/protoreflect
 google.golang.org/protobuf/runtime/protoimpl
 google.golang.org/protobuf/encoding/prototext
+google.golang.org/protobuf/encoding/protowire
 google.golang.org/protobuf/proto
 google.golang.org/protobuf/reflect/protoregistry
 google.golang.org/protobuf/runtime/protoiface
-google.golang.org/protobuf/encoding/protowire
 google.golang.org/protobuf/internal/pragma
 google.golang.org/protobuf/internal/filedesc
 google.golang.org/protobuf/internal/filetype
