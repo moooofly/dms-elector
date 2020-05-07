@@ -1,0 +1,131 @@
+hash: d32335d0e481abf417dbee20aa7deecf6920d414ddb671a63a326e459ef29bea
+updated: 2020-05-07T14:21:37.674461119+08:00
+imports:
+- name: github.com/alecthomas/template
+  version: fb15b899a75114aa79cc930e33c46b577cc664b1
+  subpackages:
+  - parse
+- name: github.com/alecthomas/units
+  version: f65c72e2690dc4b403c8bd637baf4611cd4c069b
+- name: github.com/golang/protobuf
+  version: 6c66de79d66478d166c7ea05f5d2ccaf016fbd6b
+  subpackages:
+  - proto
+  - ptypes
+  - ptypes/any
+  - ptypes/duration
+  - ptypes/timestamp
+- name: github.com/konsorten/go-windows-terminal-sequences
+  version: edb144dfd453055e1e49a3d8b410a660b5a87613
+- name: github.com/samuel/go-zookeeper
+  version: 2cc03de413da42869e2db7ce7965d3e978d917eb
+  subpackages:
+  - zk
+- name: github.com/sirupsen/logrus
+  version: 60c74ad9be0d874af0ab0daef6ab07c5c5911f0d
+- name: golang.org/x/net
+  version: 7e3656a0809f6f95abd88ac65313578f80b00df2
+  subpackages:
+  - context
+  - http/httpguts
+  - http2
+  - http2/hpack
+  - idna
+  - internal/timeseries
+  - trace
+- name: golang.org/x/sys
+  version: bc7a7d42d5c30f4d0fe808715c002826ce2c624e
+  subpackages:
+  - internal/unsafeheader
+  - unix
+- name: golang.org/x/text
+  version: afb9336c4530b4b18f37130eab53f245f7d6821e
+  subpackages:
+  - secure/bidirule
+  - transform
+  - unicode/bidi
+  - unicode/norm
+- name: google.golang.org/genproto
+  version: b979b6f78d84775ef7a93ffc8034924947960f29
+  subpackages:
+  - googleapis/rpc/status
+- name: google.golang.org/grpc
+  version: 03def2a1f3d4fd22fb566d561195c31330984c29
+  subpackages:
+  - attributes
+  - backoff
+  - balancer
+  - balancer/base
+  - balancer/roundrobin
+  - binarylog/grpc_binarylog_v1
+  - codes
+  - connectivity
+  - credentials
+  - credentials/internal
+  - encoding
+  - encoding/proto
+  - grpclog
+  - internal
+  - internal/backoff
+  - internal/balancerload
+  - internal/binarylog
+  - internal/buffer
+  - internal/channelz
+  - internal/envconfig
+  - internal/grpclog
+  - internal/grpcrand
+  - internal/grpcsync
+  - internal/grpcutil
+  - internal/resolver/dns
+  - internal/resolver/passthrough
+  - internal/serviceconfig
+  - internal/status
+  - internal/syscall
+  - internal/transport
+  - keepalive
+  - metadata
+  - naming
+  - peer
+  - resolver
+  - serviceconfig
+  - stats
+  - status
+  - tap
+- name: google.golang.org/protobuf
+  version: 8b0d71ac935315b10385aaaf30175de0c74bbba6
+  subpackages:
+  - encoding/prototext
+  - encoding/protowire
+  - internal/descfmt
+  - internal/descopts
+  - internal/detrand
+  - internal/encoding/defval
+  - internal/encoding/messageset
+  - internal/encoding/tag
+  - internal/encoding/text
+  - internal/errors
+  - internal/fieldnum
+  - internal/fieldsort
+  - internal/filedesc
+  - internal/filetype
+  - internal/flags
+  - internal/genname
+  - internal/impl
+  - internal/mapsort
+  - internal/pragma
+  - internal/set
+  - internal/strs
+  - internal/version
+  - proto
+  - reflect/protoreflect
+  - reflect/protoregistry
+  - runtime/protoiface
+  - runtime/protoimpl
+  - types/known/anypb
+  - types/known/durationpb
+  - types/known/timestamppb
+- name: gopkg.in/alecthomas/kingpin.v2
+  version: 947dcec5ba9c011838740e680966fd7087a71d0d
+- name: gopkg.in/ini.v1
+  version: 39bc4ddcb8b9d0100f7a040816380ccda878b94a
+testImports: []
