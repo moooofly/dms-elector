@@ -1,3 +1,16 @@
+## 0.4.0 (2020-05-08)
+
+* feat: add 'import declaration' for go module usage outside GOPATH ([a50db4b](https://github.com/moooofly/dms-elector/commit/a50db4b))
+* feat: add glide vendor ([0cd862c](https://github.com/moooofly/dms-elector/commit/0cd862c))
+* feat: add vendor by 'go module' ([225eacc](https://github.com/moooofly/dms-elector/commit/225eacc))
+* feat: fix some bugs and optimize log output ([275465c](https://github.com/moooofly/dms-elector/commit/275465c))
+* feat: update golang to 1.13.10, change backto go module ([6e00f30](https://github.com/moooofly/dms-elector/commit/6e00f30))
+* chore: rollback vendor management to glide for some reasons ([0aeac9b](https://github.com/moooofly/dms-elector/commit/0aeac9b))
+* build: update vendor ([bab0c65](https://github.com/moooofly/dms-elector/commit/bab0c65))
+* build: update vendor and some logs ([754a26e](https://github.com/moooofly/dms-elector/commit/754a26e))
+
+
+
 ## 0.3.0 (2020-04-16)
 
 * refactor: after removing request server related codes, cluster.go need to be updated ([f85ab83](https://github.com/moooofly/dms-elector/commit/f85ab83))
