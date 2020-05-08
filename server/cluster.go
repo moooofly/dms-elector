@@ -59,12 +59,12 @@ func doCloseRemoteZkWrapper(args ...interface{}) error {
 }
 
 // NewClusterElector is the constructor of ClusterElector
-func NewClusterElector(path, rsTcpHost, rsUnixPath string, zkHost []string, zkLeaderDir string, opts ...electorOption) *ClusterElector {
+func NewClusterElector(path, rsIp, rsPort, rsUnixPath string, zkHost []string, zkLeaderDir string, opts ...electorOption) *ClusterElector {
 	role, _ := loadState(path)
-	return newClusterElectorWithInfo(path, role, rsTcpHost, rsUnixPath, zkHost, zkLeaderDir, opts...)
+	return newClusterElectorWithInfo(path, role, rsIp, rsPort, rsUnixPath, zkHost, zkLeaderDir, opts...)
 }
 
-func newClusterElectorWithInfo(path string, role Role, rsTcpHost, rsUnixPath string, zkHost []string, zkLeaderDir string, opts ...electorOption) *ClusterElector {
+func newClusterElectorWithInfo(path string, role Role, rsIp, rsPort, rsUnixPath string, zkHost []string, zkLeaderDir string, opts ...electorOption) *ClusterElector {
 	var e ClusterElector
 
 	e.id = rand.Uint64()
@@ -75,7 +75,7 @@ func newClusterElectorWithInfo(path string, role Role, rsTcpHost, rsUnixPath str
 	e.zkLeaderPath = zkLeaderDir + "/" + zkLeaderNodeName
 	e.zkAbdicatePath = zkLeaderDir + "/" + zkAbdicateFlagName
 	e.zkHost = zkHost
-	e.rs = newRoleService(rsTcpHost, rsUnixPath, &e)
+	e.rs = newRoleService(rsIp, rsPort, rsUnixPath, &e)
 	e.path = path
 
 	// defaults
@@ -110,7 +110,7 @@ func (e *ClusterElector) Start() error {
 	e.connectZkTillSucceed(true)
 
 	// start local user request server if need to
-	if e.rs.tcpHost != "" || e.rs.unixHost != "" {
+	if (e.rs.ip != "" && e.rs.port != "") || e.rs.path != "" {
 		if err := e.rs.Start(); err != nil {
 			logrus.Warnf("[%s] Cannot start local request server: %v", e.Info().String(), err)
 			return err

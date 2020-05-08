@@ -1,8 +1,6 @@
 package parser
 
 import (
-	"fmt"
-
 	"github.com/sirupsen/logrus"
 	"gopkg.in/ini.v1"
 )
@@ -18,12 +16,13 @@ var (
 
 // [global] section in .ini
 type global struct {
-	TcpHost   string `ini:"local-tcp-request-server-host"`
-	UnixHost  string `ini:"local-unix-request-server-path"`
-	StateFile string `ini:"persistence-file-path"`
-	LogFile   string `ini:"log-file"`
-	LogLevel  string `ini:"log-level"`
-	Mode      string `ini:"mode"`
+	RoleServiceIp       string `ini:"role-service-ip"`
+	RoleServicePort     string `ini:"role-service-port"`
+	RoleServiceUnixPath string `ini:"role-service-unix-path"`
+	StateFile           string `ini:"elector-state-file"`
+	LogFile             string `ini:"log-file"`
+	LogLevel            string `ini:"log-level"`
+	Mode                string `ini:"mode"`
 }
 
 // [single-point] section in .ini
@@ -32,8 +31,10 @@ type single struct {
 
 // [master-slave] section in .ini
 type ms struct {
-	Local         string `ini:"local-elector-server-host"`
-	Remote        string `ini:"remote-elector-server-host"`
+	LocalEleIp    string `ini:"local-elector-ip"`
+	LocalElePort  string `ini:"local-elector-port"`
+	RemoteEleIp   string `ini:"remote-elector-ip"`
+	RemoteElePort string `ini:"remote-elector-port"`
 	RetryPeriod   uint   `ini:"retry-period"`
 	PingPeriod    uint   `ini:"ping-period"`
 	LeaderTimeout uint   `ini:"leader-timeout"`
@@ -46,13 +47,13 @@ type cluster struct {
 	ProtectionPeriod int    `ini:"protection-period"`
 }
 
-func Load(confPath string) {
-	cf := fmt.Sprintf("%s/elector.ini", confPath)
-
+func Load(confFile string) {
 	var err error
-	cfg, err = ini.Load(cf)
+	cfg, err = ini.LoadSources(ini.LoadOptions{
+		IgnoreInlineComment: true,
+	}, confFile)
 	if err != nil {
-		logrus.Fatalf("Fail to parse '%s': %v", cf, err)
+		logrus.Fatalf("Fail to parse '%s': %v", confFile, err)
 	}
 
 	mapTo("global", GlobalSetting)
@@ -65,9 +66,9 @@ func Load(confPath string) {
 	case "cluster":
 		mapTo("cluster", ClusterSetting)
 	default:
-		logrus.Fatal("mode '%v' dose not match any of [single-point|master-slave|cluster].", GlobalSetting.Mode)
+		logrus.Fatalf("mode '%v' dose not match any of [single-point|master-slave|cluster].", GlobalSetting.Mode)
 	}
-	logrus.Infof("mode setting => [%s]", GlobalSetting.Mode)
+	//logrus.Infof("mode setting => [%s]", GlobalSetting.Mode)
 }
 
 func mapTo(section string, v interface{}) {

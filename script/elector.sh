@@ -2,7 +2,7 @@
 
 ELECTOR_WORKING_DIR=$(pwd)
 
-ELECTOR_BIN_NAME='elector'
+ELECTOR_BIN_NAME='dms-elector'
 
 ELECTOR_PID_FILE_DIR='/run'
 ELECTOR_PID_FILE_NAME='dms-elector.pid'
@@ -29,7 +29,7 @@ start)
         fi
     fi
 
-    ${ELECTOR_EXE} ${ELECTOR_CFG} &
+    ${ELECTOR_EXE} --conf=${ELECTOR_CFG} &
 
     if [ $? -eq 0 ]; then
         pid=$!

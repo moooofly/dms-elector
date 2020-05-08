@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"net"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"unsafe"
 
 	pb "github.com/moooofly/dms-elector/proto"
+
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -36,8 +38,11 @@ type msElector struct {
 	role   Role   // elector role
 	epoch  uint64 // elector current epoch
 	stFile string // state file with role and epoch
-	local  string // local elector listening address
-	remote string // remote elector listening address
+
+	localEleIp    string
+	localElePort  string
+	remoteEleIp   string
+	remoteElePort string
 
 	rs      *roleService
 	options electorOptions
@@ -68,21 +73,24 @@ type msElector struct {
 // NewmsElector is the constructor of msElector
 func NewMasterSlave(
 	stfile string,
-	rsTcpHost, rsUnixPath string,
-	local, remote string,
+	rsIp, rsPort, rsUnixPath string,
+	localEleIp, localElePort string,
+	remoteEleIp, remoteElePort string,
 	opts ...electorOption,
 ) *msElector {
 
 	role, epoch := loadState(stfile)
-	return newMasterSlaveWithInfo(stfile, role, epoch, rsTcpHost, rsUnixPath, local, remote, opts...)
+	return newMasterSlaveWithInfo(stfile, role, epoch, rsIp, rsPort, rsUnixPath,
+		localEleIp, localElePort, remoteEleIp, remoteElePort, opts...)
 }
 
 func newMasterSlaveWithInfo(
 	stfile string,
 	role Role,
 	epoch uint64,
-	rsTcpHost, rsUnixPath string,
-	local, remote string,
+	rsIp, rsPort, rsUnixPath string,
+	localEleIp, localElePort string,
+	remoteEleIp, remoteElePort string,
 	opts ...electorOption,
 ) *msElector {
 
@@ -92,10 +100,12 @@ func newMasterSlaveWithInfo(
 	ms.role = role
 	ms.epoch = epoch
 	ms.stFile = stfile
-	ms.local = local
-	ms.remote = remote
+	ms.localEleIp = localEleIp
+	ms.localElePort = localElePort
+	ms.remoteEleIp = remoteEleIp
+	ms.remoteElePort = remoteElePort
 
-	ms.rs = newRoleService(rsTcpHost, rsUnixPath, ms)
+	ms.rs = newRoleService(rsIp, rsPort, rsUnixPath, ms)
 	ms.count = 0
 
 	// TODO: set default values in an appropriate way
@@ -144,12 +154,12 @@ func (e *msElector) Abdicate() {
 	// tell remote elector about abdicating action
 	abdicateRsp, err := e.electorClient.Abdicate(ctx, &abdicate)
 	if err != nil {
-		logrus.Warnf("[%s] --> send [Abdicate] to remote elector failed, reason: %v", e.Role().String(), err)
+		logrus.Warnf("[%s] --> send [Abdicate] to remote elector failed, reason: %v", e.Info(), err)
 		e.setStateDisconnected(err)
 		return
 	}
 
-	logrus.Infof("[%s] --> send [Abdicate] to remote elector => [%s]", e.Role().String(), abdicate.String())
+	logrus.Infof("[%s] --> send [Abdicate] to remote elector => [%s]", e.Info(), abdicate.String())
 
 	e.evCh <- &eEvent{abdicateRsp, nil, nil}
 }
@@ -157,19 +167,26 @@ func (e *msElector) Abdicate() {
 // Promote myself to Leader
 func (e *msElector) Promote() {
 	if e.role == RoleLeader {
-		logrus.Warnf("[%s] promote failed, reason: Leader need not to promote", e.Role().String())
+		logrus.Warnf("[%s] promote failed, reason: Leader need not to promote", e.Info())
 		return
 	}
 
 	e.userRequestCh <- &eEvent{userRequestPromote, nil, nil}
 
-	logrus.Infof("[%s] make [%s] to promote locally", e.Role().String(), e.Role().String())
+	logrus.Infof("[%s] make [%s] to promote locally", e.Info(), e.Info())
 }
 
 // Stop shuts down all the connections and resources
 // related to the elector.
 func (e *msElector) Stop() error {
-	logrus.Infof("[master-slave] stop elector as [%s]", e.Role().String())
+	logrus.Infof("[master-slave] stop elector as [%s] at epoch [%d]", e.Info(), e.epoch)
+
+	if err := saveState(e.stFile, e.role, e.epoch); err != nil {
+		logrus.Warnf("[master-slave] #### saveState() failed, %v", err)
+	} else {
+		logrus.Infof("[master-slave] #### saveState() success, stFile => %s  [%v, epoch:%d]",
+			e.stFile, e.Info(), e.epoch)
+	}
 
 	e.mu.RLock()
 	cc := e.grpcClientConn
@@ -205,8 +222,6 @@ func (e *msElector) Stop() error {
 		e.rs.Stop()
 	}
 
-	saveState(e.stFile, e.role, e.epoch)
-
 	return err
 }
 
@@ -233,10 +248,11 @@ func (e *msElector) Start() (err error) {
 		// step 1: 启动 elector server
 		if err = e.launchElector(); err != nil {
 			// FIXME: 直接使用 Fatalf ?
-			logrus.Warnf("[master-slave] launch elector as [%s] at [%s] failed, reason: %v",
-				e.Role().String(), e.local, err)
+			logrus.Warnf("[master-slave] launch elector as [%s] at [%s:%s] failed, reason: %v",
+				e.Info(), e.localEleIp, e.localElePort, err)
 		}
-		logrus.Infof("[master-slave] launch elector as [%s] at [%s] success", e.Role().String(), e.local)
+		logrus.Infof("[master-slave] launch elector as [%s] at [%s:%s] success",
+			e.Info(), e.localEleIp, e.localElePort)
 
 		// step 3: 和 remote elector 建立连接
 		// An optimistic first connection attempt to ensure that applications
@@ -263,9 +279,17 @@ func (e *msElector) Start() (err error) {
 
 // start elector server in master-slave mode
 func (e *msElector) launchElector() error {
-	l, err := net.Listen("tcp", e.local)
+
+	var addr string
+	if strings.Contains(e.localEleIp, ":") {
+		addr = fmt.Sprintf("[%s]:%s", e.localEleIp, e.localElePort)
+	} else {
+		addr = fmt.Sprintf("%s:%s", e.localEleIp, e.localElePort)
+	}
+
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		logrus.Warnf("[master-slave]", err)
+		logrus.Warnf("[master-slave] launchElector failed, '%v'", err)
 		return err
 	}
 
@@ -296,21 +320,28 @@ func (e *msElector) connect() error {
 
 // Connect to remote elector
 func (e *msElector) connectRemoteElector() (*grpc.ClientConn, error) {
-	logrus.Infof("[%s] --> try to connect remote elector[%s] ", e.Role().String(), e.remote)
+	logrus.Infof("[%s] --> try to connect remote elector[%s:%s] ", e.Info(), e.remoteEleIp, e.remoteElePort)
+
+	var addr string
+	if strings.Contains(e.remoteEleIp, ":") {
+		addr = fmt.Sprintf("[%s]:%s", e.remoteEleIp, e.remoteElePort)
+	} else {
+		addr = fmt.Sprintf("%s:%s", e.remoteEleIp, e.remoteElePort)
+	}
 
 	conn, err := grpc.Dial(
-		e.remote,
+		addr,
 		grpc.WithInsecure(),
 		grpc.WithBlock(),
 		grpc.WithTimeout(defaultTimeout),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 30 * time.Second}))
 
 	if err != nil {
-		logrus.Warnf("[%s]     connect remote elector failed, reason: %v", e.Role().String(), err)
+		logrus.Warnf("[%s]     connect remote elector failed, reason: %v", e.Info(), err)
 		return nil, err
 	}
 
-	logrus.Infof("[%s]     connect success", e.Role().String())
+	logrus.Infof("[%s]     connect success", e.Info())
 	return conn, nil
 }
 
@@ -343,7 +374,7 @@ func (e *msElector) mainLoop() error {
 	case RoleLeader:
 		e.leaderLoop()
 	default:
-		logrus.Warnf("[master-slave] [%s] is not a legal role", e.Role().String())
+		logrus.Warnf("[master-slave] [%s] is not a legal role", e.Info())
 		return errors.New("not a legal role")
 	}
 
@@ -367,8 +398,8 @@ Leader mainloop:
 */
 func (e *msElector) leaderLoop() {
 
-	logrus.Debug("----------->  in [[  leader  ]] loop")
-	defer logrus.Debug("<----------- out [[  leader  ]] loop")
+	logrus.Infof("[%s] ---------- in [[  leader  ]] loop ---------- ", e.Info())
+	defer logrus.Infof("[%s] ---------- out [[  leader  ]] loop ---------- ", e.Info())
 
 	for {
 
@@ -379,7 +410,7 @@ func (e *msElector) leaderLoop() {
 		case userReq := <-e.userRequestCh:
 			if abdicateReq := userReq.event.(userRequest); abdicateReq == userRequestAbdicate {
 
-				logrus.Infof("[%s] abdicate myself from [Leader] to [Follower]", e.Role().String())
+				logrus.Infof("[%s] abdicate myself from [Leader] to [Follower]", e.Info())
 
 				e.changeRole(RoleLeader, RoleFollower, e.epoch)
 
@@ -415,8 +446,7 @@ func (e *msElector) leaderLoop() {
 						// brain-split recovery
 						if e.epoch < remoteEv.Epoch || (e.epoch == remoteEv.Epoch && e.count < remoteEv.Count) {
 
-							logrus.Infof("[%s] <-- recv [Ping] from an elder leader, changing to [Follower]",
-								e.Role().String())
+							logrus.Infof("[%s] <-- recv [Ping] from an elder leader, changing to [Follower]", e.Info())
 
 							e.changeRole(RoleLeader, RoleFollower, remoteEv.Epoch)
 
@@ -428,8 +458,7 @@ func (e *msElector) leaderLoop() {
 
 							return
 						} else {
-							logrus.Infof("[%s] <-- recv [Ping] from a younger leader, send a [Pong] back",
-								e.Role().String())
+							logrus.Infof("[%s] <-- recv [Ping] from a younger leader, send a [Pong] back", e.Info())
 
 							eev.reply = pb.MsgPONG{Id: e.id, Role: pb.EnumRole(e.role), Epoch: e.epoch, Count: e.count}
 							eev.errCh <- nil
@@ -441,8 +470,7 @@ func (e *msElector) leaderLoop() {
 						// check if the other side is a good leader
 						if e.epoch < remoteEv.Epoch || (e.epoch == remoteEv.Epoch && e.count < remoteEv.Count) {
 
-							logrus.Infof("[%s] <-- recv [Pong] from an elder leader, changing to [Follower]",
-								e.Role().String())
+							logrus.Infof("[%s] <-- recv [Pong] from an elder leader, changing to [Follower]", e.Info())
 
 							e.changeRole(RoleLeader, RoleFollower, remoteEv.Epoch)
 
@@ -451,7 +479,7 @@ func (e *msElector) leaderLoop() {
 
 							return
 						} else {
-							logrus.Debugf("[%s] <-- recv [Pong] => [%s]", e.Role().String(), remoteEv.String())
+							//logrus.Debugf("[%s] <-- recv [Pong] => [%s]", e.Info(), remoteEv.String())
 						}
 
 					case *pb.MsgSeekVote:
@@ -464,7 +492,7 @@ func (e *msElector) leaderLoop() {
 
 					case *pb.MsgAbdicate:
 						// NOTE: 回应 remote 的消息，但由于 local elector 已经是 leader ，因此无需 promote
-						logrus.Infof("[%s] <-- recv [Abdicate] from remote elector (claimed Leader), send [Promoted: false] back", e.Role().String())
+						logrus.Infof("[%s] <-- recv [Abdicate] from remote elector (claimed Leader), send [Promoted: false] back", e.Info())
 
 						eev.reply = pb.MsgPromoted{Id: e.id, Role: pb.EnumRole(e.role), Epoch: e.epoch, Promoted: false}
 						eev.errCh <- nil
@@ -496,8 +524,8 @@ func (e *msElector) leaderLoop() {
 // 		5) Abdicate: promote and reply a promoted message, if I am not already in abdicating state;
 //		6) Promoted: clear the abdicating flag if any.
 func (e *msElector) followerLoop() {
-	logrus.Debug("----------->  in [[ follower ]] loop")
-	defer logrus.Debug("<----------- out [[ follower ]] loop")
+	logrus.Infof("[%s] ---------- in [[  follower  ]] loop ---------- ", e.Info())
+	defer logrus.Infof("[%s] ---------- out [[  follower  ]] loop ---------- ", e.Info())
 
 	for {
 
@@ -507,8 +535,7 @@ func (e *msElector) followerLoop() {
 
 		case userReq := <-e.userRequestCh:
 			if promoteReq := userReq.event.(userRequest); promoteReq == userRequestPromote {
-				logrus.Infof("[%s] <-- recv [Promote] by user request, promote myself to Leader",
-					e.Role().String())
+				logrus.Infof("[%s] <-- recv [Promote] by user request, promote myself to Leader", e.Info())
 
 				e.changeRole(e.role, RoleLeader, e.nextEpoch())
 
@@ -531,8 +558,12 @@ func (e *msElector) followerLoop() {
 
 				select {
 				case <-ticker.C:
+					// NOTE: here is a black magic
+					// because as follower, it will do nothing actively, but receiving from leader's PING (and abdicate)
+					// When network broken, follower receive nothing util leaderTimeout trigger, at this time duration,
+					// the connection state to remote Leader will not be changed, so here it is
 					logrus.Infof("[%s] lost conection to Leader, more than [%d]s, promote myself to [Leader]",
-						e.Role().String(), e.options.leaderTimeout)
+						e.Info(), e.options.leaderTimeout)
 
 					e.changeRole(RoleFollower, RoleLeader, e.nextEpoch())
 
@@ -549,7 +580,7 @@ func (e *msElector) followerLoop() {
 						remoteEv := ev.(*pb.MsgPING)
 
 						logrus.Infof("[%s] <-- recv [Ping, count:%d], send [Pong] back",
-							e.Role().String(), remoteEv.Count)
+							e.Info(), remoteEv.Count)
 
 						if e.epoch != remoteEv.Epoch {
 							e.epoch = remoteEv.Epoch
@@ -579,7 +610,7 @@ func (e *msElector) followerLoop() {
 						// NOTE: follower has no right to vote, should never receive [Vote]
 
 					case *pb.MsgAbdicate:
-						logrus.Infof("[%s] <-- recv [Abdicate] from remote elector (Leader), send [Promoted: true] back", e.Role().String())
+						logrus.Infof("[%s] <-- recv [Abdicate] from remote elector (Leader), send [Promoted: true] back", e.Info())
 
 						e.changeRole(RoleFollower, RoleLeader, e.nextEpoch())
 
@@ -592,14 +623,13 @@ func (e *msElector) followerLoop() {
 						return
 
 					case *pb.MsgPromoted:
-						logrus.Infof("[%s] <-- recv [Promoted] from a new Leader just being promoted", e.Role().String())
+						logrus.Infof("[%s] <-- recv [Promoted] from a new Leader just being promoted", e.Info())
 
 					default:
 						logrus.Debugf("not a good event: %T", ev)
 					}
 				}
 			}
-
 		}
 	}
 }
@@ -700,7 +730,7 @@ func (e *msElector) changeRole(from, to Role, epoch uint64) {
 	}
 
 	logrus.Infof("[%s] change role from [%s] to [%s] at epoch [%d]",
-		e.Role().String(), from.String(), to.String(), epoch)
+		e.Info(), from.String(), to.String(), epoch)
 
 	e.role = to
 	e.epoch = epoch
@@ -721,7 +751,7 @@ func (e *msElector) nextEpoch() uint64 {
 // NOTE: only master can ping remote
 func (e *msElector) ping() {
 	if e.role != RoleLeader {
-		logrus.Warnf("[%s] ping failed, reason: only Leader can ping remote", e.Role().String())
+		logrus.Warnf("[%s] ping failed, reason: only Leader can ping remote", e.Info())
 		return
 	}
 
@@ -738,13 +768,13 @@ func (e *msElector) ping() {
 
 	rsp, err := e.electorClient.PING(ctx, &ping)
 	if err != nil {
-		logrus.Warnf("[%s] --> send [Ping] failed, reason: %v", e.Role().String(), err)
+		logrus.Warnf("[%s] --> send [Ping] failed, reason: %v", e.Info(), err)
 		e.setStateDisconnected(err)
 		return
 	}
 
-	logrus.Debugf("[%s] --> send [Ping] => [%s]", e.Role().String(), ping.String())
-	logrus.Infof("[%s] --> send [Ping, count:%d], recv [Pong] back", e.Role().String(), e.count)
+	//logrus.Debugf("[%s] --> send [Ping] => [%s]", e.Info(), ping.String())
+	logrus.Infof("[%s] --> send [Ping, count:%d], recv [Pong] back", e.Info(), e.count)
 
 	e.evCh <- &eEvent{rsp, nil, nil}
 }
@@ -758,10 +788,10 @@ type electorService struct {
 func (es *electorService) PING(ctx context.Context, ping *pb.MsgPING) (*pb.MsgPONG, error) {
 	var eev eEvent
 
-	logrus.Debugf("[%s] <-- recv [Ping] => [%s]", es.e.Role().String(), ping.String())
+	//logrus.Debugf("[%s] <-- recv [Ping] => [%s]", es.e.Info(), ping.String())
 
 	if err := es.sanityCheck(ctx); err != nil {
-		logrus.Warnf("[%s] sanityCheck failed, reason: %v", es.e.Role().String(), err)
+		logrus.Warnf("[%s] sanityCheck failed, reason: %v", es.e.Info(), err)
 		return nil, err
 	}
 
@@ -772,20 +802,20 @@ func (es *electorService) PING(ctx context.Context, ping *pb.MsgPING) (*pb.MsgPO
 
 	if err := <-eev.errCh; err != nil {
 		s, _ := status.FromError(err)
-		logrus.Warnf("[%s] error: %v", es.e.Role().String(), err)
+		logrus.Warnf("[%s] error: %v", es.e.Info(), err)
 		return nil, s.Err()
 	}
 
 	reply := eev.reply.(pb.MsgPONG)
 
-	logrus.Debugf("[%s] --> send [Pong] => [%s]", es.e.Role().String(), reply.String())
+	//logrus.Debugf("[%s] --> send [Pong] => [%s]", es.e.Info(), reply.String())
 	return &reply, nil
 }
 
 func (es *electorService) SeekVote(ctx context.Context, seek *pb.MsgSeekVote) (*pb.MsgVote, error) {
 	var eev eEvent
 
-	logrus.Debugf("[%s] <-- recv [SeekVote] => [%s]", es.e.Role().String(), seek.String())
+	logrus.Debugf("[%s] <-- recv [SeekVote] => [%s]", es.e.Info(), seek.String())
 
 	if err := es.sanityCheck(ctx); err != nil {
 		return nil, err
@@ -803,14 +833,14 @@ func (es *electorService) SeekVote(ctx context.Context, seek *pb.MsgSeekVote) (*
 
 	reply := eev.reply.(pb.MsgVote)
 
-	logrus.Debugf("[%s] --> send [Vote] => [%s]", es.e.Role().String(), reply.String())
+	logrus.Debugf("[%s] --> send [Vote] => [%s]", es.e.Info(), reply.String())
 	return &reply, nil
 }
 
 func (es *electorService) Abdicate(ctx context.Context, abdicate *pb.MsgAbdicate) (*pb.MsgPromoted, error) {
 	var eev eEvent
 
-	logrus.Debugf("[%s] <-- recv [Abdicate] => [%s]", es.e.Role().String(), abdicate.String())
+	logrus.Debugf("[%s] <-- recv [Abdicate] => [%s]", es.e.Info(), abdicate.String())
 
 	if err := es.sanityCheck(ctx); err != nil {
 		return nil, err
@@ -828,7 +858,7 @@ func (es *electorService) Abdicate(ctx context.Context, abdicate *pb.MsgAbdicate
 
 	reply := eev.reply.(pb.MsgPromoted)
 
-	logrus.Debugf("[%s] --> send [Promoted] => [%s]", es.e.Role().String(), reply.String())
+	logrus.Debugf("[%s] --> send [Promoted] => [%s]", es.e.Info(), reply.String())
 	return &reply, nil
 }
 
@@ -843,10 +873,10 @@ func (es *electorService) sanityCheck(ctx context.Context) error {
 		return status.Error(codes.DataLoss, "failed to get peer address")
 	}
 
-	from, expect := strings.Split(remote.Addr.String(), ":")[0], strings.Split(es.e.remote, ":")[0]
+	from, expect := strings.Split(remote.Addr.String(), ":")[0], es.e.remoteEleIp
 	if from != expect {
 		logrus.Warnf("[%s] refuse this ping, reason: from [%s], not from [%s] as expect",
-			es.e.Role().String(), from, expect)
+			es.e.Info(), from, expect)
 		return errors.New("wrong target to connect")
 	}
 

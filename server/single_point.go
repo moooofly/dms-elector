@@ -24,12 +24,12 @@ type spElector struct {
 }
 
 // NewSinglePoint is the constructor of spElector
-func NewSinglePoint(stfile, rsTcpHost, rsUnixHost string) *spElector {
+func NewSinglePoint(stfile, rsIp, rsPort, rsUnixPath string) *spElector {
 	role, _ := loadState(stfile)
-	return newSinglePointWithInfo(stfile, role, rsTcpHost, rsUnixHost)
+	return newSinglePointWithInfo(stfile, role, rsIp, rsPort, rsUnixPath)
 }
 
-func newSinglePointWithInfo(stfile string, role Role, rsTcpHost, rsUnixHost string) *spElector {
+func newSinglePointWithInfo(stfile string, role Role, rsIp, rsPort, rsUnixPath string) *spElector {
 	e := new(spElector)
 
 	e.id = rand.Uint64()
@@ -37,7 +37,7 @@ func newSinglePointWithInfo(stfile string, role Role, rsTcpHost, rsUnixHost stri
 	e.epoch = 0
 	e.stFile = stfile
 
-	e.rs = newRoleService(rsTcpHost, rsUnixHost, e)
+	e.rs = newRoleService(rsIp, rsPort, rsUnixPath, e)
 
 	return e
 }

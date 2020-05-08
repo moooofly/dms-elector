@@ -1,4 +1,4 @@
-package main
+package main // import "github.com/moooofly/dms-elector"
 
 import (
 	"fmt"
@@ -9,6 +9,8 @@ import (
 	"syscall"
 
 	srv "github.com/moooofly/dms-elector/pkg/servitization"
+
+	"github.com/sirupsen/logrus"
 )
 
 func main() {
@@ -32,8 +34,8 @@ func main() {
 				fmt.Printf("crashed, err: %s\nstack:\n%s", e, string(debug.Stack()))
 			}
 		}()
-		for range signalChan {
-			log.Println("Recv an Unix Signal, stopping...")
+		for sig := range signalChan {
+			logrus.Errorf("Recv an Unix Signal (%v), stopping...", sig)
 			srv.Teardown()
 			done <- true
 		}

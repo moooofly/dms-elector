@@ -3,7 +3,6 @@ package server
 import (
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"math/big"
 	"math/rand"
@@ -13,6 +12,8 @@ import (
 	"time"
 
 	"github.com/moooofly/dms-elector/pkg/util"
+	"github.com/sirupsen/logrus"
+
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/peer"
 
@@ -253,16 +254,19 @@ type ElectorInfo struct {
 	epoch uint64
 }
 
-func (ebi ElectorInfo) String() string {
-	//return fmt.Sprintf("0x%x, %s, 0x%x", ebi.id, ebi.role.StringShort(), ebi.epoch)
-	return fmt.Sprintf("%s, epoch:0x%x", ebi.role.String(), ebi.epoch)
+func (ei ElectorInfo) String() string {
+	//return fmt.Sprintf("0x%x, %s, 0x%x", ei.id, ei.role.StringShort(), ei.epoch)
+	return fmt.Sprintf("%s, epoch:%x", ei.role.String(), ei.epoch)
 }
 
 func loadState(path string) (role Role, epoch uint64) {
 	content, err := util.ReadFile(path)
 	if err != nil {
-		log.Println(err)
-		return role, epoch
+		// NOTE: 默认作为 Leader 启动
+		logrus.Warnf("#### ReadFile() failed, err => %v (fucking idiot del my file) -- do saveState() and return [Leader, epoch:0]", err)
+		saveState(path, RoleLeader, uint64(0))
+
+		return RoleLeader, uint64(0)
 	}
 
 	for _, c := range content {
@@ -276,13 +280,13 @@ func loadState(path string) (role Role, epoch uint64) {
 			case "Leader":
 				role = RoleLeader
 			default:
-				return RoleCandidate, uint64(0)
+				return RoleLeader, uint64(0)
 			}
 
 		case "Epoch":
 			epoch, err = strconv.ParseUint(c[1], 10, 64)
 			if err != nil {
-				return RoleCandidate, uint64(0)
+				return RoleLeader, uint64(0)
 			}
 		}
 	}

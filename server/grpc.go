@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -12,20 +14,24 @@ import (
 )
 
 type roleService struct {
-	tcpHost  string
-	unixHost string
+	ip   string
+	port string
+
+	path string
 
 	e Elector
 }
 
 func (s *roleService) Obtain(ctx context.Context, r *pb.ObtainReq) (*pb.ObtainRsp, error) {
-	cip, err := getClietAddr(ctx)
-	if err != nil {
-		logrus.Infof("[%s][role-service] err: %v", s.e.Info().role.String(), err)
-	}
+	/*
+		cip, err := getClietAddr(ctx)
+		if err != nil {
+			logrus.Infof("[%s][role-service] err: %v", s.e.Info().role.String(), err)
+		}
 
-	logrus.Debugf("[%s][role-service] <-- recv [Obtain] from [%s], send Resp back",
-		s.e.Info().role.String(), cip)
+		logrus.Debugf("[%s][role-service] <-- recv [Obtain] from [%s], send Resp back",
+			s.e.Info().role.String(), cip)
+	*/
 
 	return &pb.ObtainRsp{
 		Code: pb.EnumCode_Success,
@@ -76,32 +82,39 @@ func (s *roleService) Promote(ctx context.Context, r *pb.PromoteReq) (*pb.Promot
 	}, nil
 }
 
-func newRoleService(t string, u string, e Elector) *roleService {
-	return &roleService{tcpHost: t, unixHost: u, e: e}
+func newRoleService(ip, port string, u string, e Elector) *roleService {
+	return &roleService{ip: ip, port: port, path: u, e: e}
 }
 
 func (s *roleService) Start() error {
 	server := grpc.NewServer()
 	pb.RegisterRoleServiceServer(server, s)
 
-	if s.tcpHost == "" && s.unixHost == "" {
-		logrus.Warnf("[role-service] neither tcpHost nor unixHost is set")
+	if (s.ip == "" || s.port == "") && s.path == "" {
+		logrus.Warnf("[role-service] role service setting is wrong, please check")
 		return errors.New("host not set")
 	}
 
+	var addr string
+	if strings.Contains(s.ip, ":") {
+		addr = fmt.Sprintf("[%s]:%s", s.ip, s.port)
+	} else {
+		addr = fmt.Sprintf("%s:%s", s.ip, s.port)
+	}
+
 	// TODO: both tcp and unix sock should support
-	lis, err := net.Listen("tcp", s.tcpHost)
+	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 
-	logrus.Infof("[role-service] launch role service at [%s]", s.tcpHost)
+	logrus.Infof("[role-service] launch role service at [%s:%s]", s.ip, s.port)
 
 	return server.Serve(lis)
 }
 
 func (s *roleService) Stop() error {
 	// TODO:
-	logrus.Info("[grcp-role-service] not implement yet")
+	logrus.Info("[role-service] not implement yet")
 	return nil
 }
